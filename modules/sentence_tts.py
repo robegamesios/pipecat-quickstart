@@ -7,6 +7,7 @@ from typing import List, Optional
 from pipecat.frames.frames import (
     EndFrame,
     Frame,
+    InterruptionFrame,
     LLMFullResponseEndFrame,
     LLMFullResponseStartFrame,
     LLMTextFrame,
@@ -58,6 +59,22 @@ class SentenceTTSPipeline(FrameProcessor):
         if isinstance(frame, EndFrame):
             await self._stop_drain()
             await self._tts.stop(frame)
+            await self.push_frame(frame, direction)
+            return
+
+        if isinstance(frame, InterruptionFrame):
+            # Barge-in: stop any current speech, clear pending, reset state
+            await self._stop_drain()
+            await self._clear_queue()
+            self._buffer = []
+            self._emitted_chars = 0
+            self._capturing = False
+            self._last_sentence = ""
+            # Hide current subtitle immediately
+            await self.queue_frame(
+                TransportMessageUrgentFrame({"type": "subtitle_end", "text": ""})
+            )
+            # Propagate interruption downstream so transports can react
             await self.push_frame(frame, direction)
             return
 
@@ -140,3 +157,11 @@ class SentenceTTSPipeline(FrameProcessor):
         if self._drain_task:
             await self.cancel_task(self._drain_task)
             self._drain_task = None
+
+    async def _clear_queue(self):
+        try:
+            while not self._queue.empty():
+                self._queue.get_nowait()
+                self._queue.task_done()
+        except Exception:
+            pass
