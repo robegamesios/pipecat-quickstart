@@ -35,7 +35,10 @@ def create_tts(voice_id: str = "af_sarah"):
 
 
 def create_llm():
-    return OpenAILLMService(api_key=os.getenv("OPENAI_API_KEY"))
+    return OpenAILLMService(
+        model="gpt-4o-mini",
+        api_key=os.getenv("OPENAI_API_KEY")
+        )
 
 
 def create_transport_params():

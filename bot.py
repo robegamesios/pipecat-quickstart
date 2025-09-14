@@ -39,6 +39,7 @@ from modules.services import (
     create_tts,
     create_transport_params,
 )
+from modules.subtitles import SubtitlePublisher
 
 load_dotenv(override=True)
 
@@ -60,16 +61,20 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
 
     rtvi = RTVIProcessor(config=RTVIConfig(config=[]))
 
+    # Publish LLM text to client as subtitles via data channel
+    subtitles = SubtitlePublisher()
+
     pipeline = Pipeline(
         [
-            transport.input(),  # Transport user input
-            rtvi,  # RTVI processor
+            transport.input(),
+            rtvi,
             stt,
-            context_aggregator.user(),  # User responses
-            llm,  # LLM
-            tts,  # TTS
-            transport.output(),  # Transport bot output
-            context_aggregator.assistant(),  # Assistant spoken responses
+            context_aggregator.user(),
+            llm,
+            subtitles,
+            tts,
+            transport.output(),
+            context_aggregator.assistant(),
         ]
     )
 
