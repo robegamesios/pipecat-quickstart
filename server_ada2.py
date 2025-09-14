@@ -108,7 +108,7 @@ def create_app(ada2_client_path: str) -> FastAPI:
 
     @app.get("/", include_in_schema=False)
     async def root_redirect():
-        return RedirectResponse(url="/ada2/")
+        return RedirectResponse(url="/ada2-ui/")
 
     # Manage active peer connections by pc_id
     pcs_map: Dict[str, SmallWebRTCConnection] = {}
@@ -167,7 +167,7 @@ def main():
     import uvicorn
 
     logger.info(
-        f"Server ready. Open http://{args.host}:{args.port}/ada2 to use the ADA2 avatar client."
+        f"Server ready. Open http://{args.host}:{args.port}/ada2-ui/ to use the ADA2 avatar client."
     )
     uvicorn.run(app, host=args.host, port=args.port)
 
