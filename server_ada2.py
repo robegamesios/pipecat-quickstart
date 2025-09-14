@@ -21,7 +21,7 @@ from typing import Dict
 
 from fastapi import BackgroundTasks, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
@@ -57,6 +57,26 @@ def create_app(ada2_client_path: str) -> FastAPI:
         app.mount("/ada2", StaticFiles(directory=ada2_client_path, html=True), name="ada2")
         logger.info(f"Mounted ADA2 client at /ada2 from {ada2_client_path}")
 
+        @app.get("/ada2-injected/lipsync-en.mjs", include_in_schema=False)
+        async def lipsync_en_mjs():
+            # Serve the module from the project tree by default; allow env override
+            default_path = os.path.join(os.path.dirname(__file__), "assets", "web", "lipsync-en.mjs")
+            path = os.getenv("LIPSYNC_EN_PATH", default_path)
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    src = f.read()
+                return Response(content=src, media_type="application/javascript")
+            except Exception as e:
+                logger.warning(f"Could not read lipsync-en module from {path}: {e}")
+                # Minimal fallback class to keep page working
+                src = (
+                    "export class LipsyncEn {\n"
+                    "  preProcessText(s){ return (s||'').toString(); }\n"
+                    "  wordsToVisemes(w){ const v=[]; const t=[]; const d=[]; let T=0; const s=(w||'').toLowerCase(); for(const ch of s){ let viseme=null; if('pbm'.includes(ch)) viseme='PP'; else if('fv'.includes(ch)) viseme='FF'; else if('szx'.includes(ch)) viseme='SS'; else if('td'.includes(ch)) viseme='DD'; else if('kgq'.includes(ch)) viseme='kk'; else if('n'.includes(ch)) viseme='nn'; else if('r'.includes(ch)) viseme='RR'; else if(ch==='a') viseme='aa'; else if(ch==='e') viseme='E'; else if('iy'.includes(ch)) viseme='I'; else if(ch==='o') viseme='O'; else if('uw'.includes(ch)) viseme='U'; if(viseme){ v.push(viseme); t.push(T); d.push(1); T+=1; } } if(!v.length){ v.push('sil'); t.push(0); d.push(1);} return { visemes:v, times:t, durations:d }; }\n"
+                    "}\n"
+                )
+                return Response(content=src, media_type="application/javascript")
+
         def _inject_subtitle_script(html: str) -> str:
             # Ensure relative paths resolve against /ada2/
             if "<base" not in html:
@@ -78,7 +98,7 @@ def create_app(ada2_client_path: str) -> FastAPI:
                 "  async function ensureLipsync(){\n"
                 "    try{\n"
                 "      const head = window.__TH_AVATAR__; if(!head) return; const lang = ((head.avatar && head.avatar.lipsyncLang) || 'en').toLowerCase(); head.lipsync = head.lipsync || {}; if(head.lipsync[lang]) return;\n"
-                "      let mod = null; try{ mod = await import('modules/lipsync-' + lang + '.mjs'); }catch(e){ console.warn('[Ada2DC] lipsync import failed', e); }\n"
+                "      let mod = null; try{ mod = await import('/ada2-injected/lipsync-' + lang + '.mjs'); }catch(e){ console.warn('[Ada2DC] lipsync import failed', e); }\n"
                 "      let obj = null;\n"
                 "      if(mod){ const cls = mod['Lipsync' + lang.charAt(0).toUpperCase() + lang.slice(1)]; if(typeof cls === 'function'){ try{ obj = new cls(); }catch(e){ obj = null; } } if(!obj && (mod.default || mod['lipsync' + lang.charAt(0).toUpperCase() + lang.slice(1)])){ const base = mod.default || mod['lipsync' + lang.charAt(0).toUpperCase() + lang.slice(1)]; obj = { preProcessText: (s)=> (s||'').toString(), wordsToVisemes: (word)=>{ const w=(word||'').toLowerCase(); const seq=[]; const push=(v)=>{ if(!v) return; seq.push(v); }; for(let i=0;i<w.length;i++){ const ch=w[i]; const pair=w.slice(i,i+2); if(pair==='th'){ push('TH'); i++; continue;} if(pair==='ch'||pair==='sh'||pair==='jh'){ push('CH'); i++; continue;} if('pbm'.includes(ch)){ push('PP'); continue;} if('fv'.includes(ch)){ push('FF'); continue;} if('szx'.includes(ch)){ push('SS'); continue;} if('dt'.includes(ch)){ push('DD'); continue;} if('kgq'.includes(ch)){ push('kk'); continue;} if('n'.includes(ch)){ push('nn'); continue;} if('r'.includes(ch)){ push('RR'); continue;} if(ch==='a'){ push('aa'); continue;} if(ch==='e'){ push('E'); continue;} if(ch==='i'||ch==='y'){ push('I'); continue;} if(ch==='o'){ push('O'); continue;} if(ch==='u'||ch==='w'){ push('U'); continue;} } if(seq.length===0) seq.push('sil'); const times=[]; const durations=[]; for(let i=0;i<seq.length;i++){ times.push(i); durations.push(1); } return { visemes: seq, times: times, durations: durations }; } }; } }\n"
                 "      if(!obj){ // final minimal shim\n"
