@@ -4,7 +4,7 @@ import os
 from functools import lru_cache
 
 from pipecat.audio.vad.silero import SileroVADAnalyzer
-from pipecat.services.kokoro.tts import KokoroTTSService
+from .tts_subtitles import KokoroTTSWithSubtitles
 from pipecat.services.moonshine.stt import MoonshineSTTService
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.transcriptions.language import Language
@@ -27,7 +27,7 @@ def create_stt():
 
 
 def create_tts(voice_id: str = "af_sarah"):
-    return KokoroTTSService(
+    return KokoroTTSWithSubtitles(
         model_path="assets/kokoro-v1.0.onnx",
         voices_path="assets/voices-v1.0.bin",
         voice_id=voice_id,
@@ -55,4 +55,3 @@ def create_transport_params():
             vad_analyzer=vad,
         ),
     }
-
