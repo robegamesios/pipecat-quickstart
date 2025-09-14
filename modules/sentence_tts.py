@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import re
 from typing import List, Optional
 
@@ -74,6 +75,8 @@ class SentenceTTSPipeline(FrameProcessor):
             await self.queue_frame(
                 TransportMessageUrgentFrame({"type": "subtitle_end", "text": ""})
             )
+            # Notify client to stop lipsync/audio assembly immediately
+            await self.queue_frame(TransportMessageUrgentFrame({"type": "tts_interrupt"}))
             # Propagate interruption downstream so transports can react
             await self.push_frame(frame, direction)
             return
@@ -132,9 +135,23 @@ class SentenceTTSPipeline(FrameProcessor):
             await self.queue_frame(
                 TransportMessageUrgentFrame({"type": "subtitle_delta", "text": sentence})
             )
-            # Stream audio synchronously and measure duration to pace subtitle advance
+            # Stream audio synchronously and measure duration; also mirror PCM over data channel
             total_frames = 0
             sample_rate = 24000
+
+            # Announce a new sentence assembly to the client for lipsync
+            sent_id = f"s-{asyncio.get_running_loop().time():.6f}".replace(".", "")
+            await self.queue_frame(
+                TransportMessageUrgentFrame(
+                    {
+                        "type": "tts_sentence_start",
+                        "id": sent_id,
+                        "text": sentence,
+                        "sample_rate": sample_rate,
+                    }
+                )
+            )
+
             async for f in self._tts.run_tts(sentence):
                 if isinstance(f, TTSAudioRawFrame):
                     sample_rate = f.sample_rate or sample_rate
@@ -143,6 +160,25 @@ class SentenceTTSPipeline(FrameProcessor):
                         audio=f.audio, sample_rate=f.sample_rate, num_channels=f.num_channels
                     )
                     await self.push_frame(out)
+                    # Forward PCM chunk for lipsync (base64 to keep messages textual)
+                    try:
+                        b64 = base64.b64encode(f.audio).decode("ascii")
+                        await self.queue_frame(
+                            TransportMessageUrgentFrame(
+                                {
+                                    "type": "tts_sentence_chunk",
+                                    "id": sent_id,
+                                    "chunk": b64,
+                                }
+                            )
+                        )
+                    except Exception:
+                        pass
+
+            # Signal sentence assembly end
+            await self.queue_frame(
+                TransportMessageUrgentFrame({"type": "tts_sentence_end", "id": sent_id})
+            )
             # Approximate playout time to hold subtitle until audio finishes
             duration_s = (total_frames / max(sample_rate, 1)) if total_frames else max(len(sentence) * 0.06, 0.4)
             await asyncio.sleep(duration_s + 0.05)
