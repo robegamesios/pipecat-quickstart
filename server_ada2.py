@@ -54,8 +54,9 @@ def create_app(ada2_client_path: str) -> FastAPI:
             f"ADA2 client path not found: {ada2_client_path}. Set ADA2_CLIENT_PATH to override."
         )
     else:
-        app.mount("/ada2", StaticFiles(directory=ada2_client_path, html=True), name="ada2")
-        logger.info(f"Mounted ADA2 client at /ada2 from {ada2_client_path}")
+        # Serve ADA2 static assets under /ada2-static (no direct UI at /ada2)
+        app.mount("/ada2-static", StaticFiles(directory=ada2_client_path, html=False), name="ada2_static")
+        logger.info(f"Mounted ADA2 static assets at /ada2-static from {ada2_client_path}")
 
         @app.get("/ada2-injected/lipsync-en.mjs", include_in_schema=False)
         async def lipsync_en_mjs():
@@ -78,9 +79,9 @@ def create_app(ada2_client_path: str) -> FastAPI:
                 return Response(content=src, media_type="application/javascript")
 
         def _inject_subtitle_script(html: str) -> str:
-            # Ensure relative paths resolve against /ada2/
+            # Ensure relative paths resolve against /ada2-static/
             if "<base" not in html:
-                html = html.replace("<head>", "<head>\n<base href=\"/ada2/\">\n")
+                html = html.replace("<head>", "<head>\n<base href=\"/ada2-static/\">\n")
 
             # Try to expose the TalkingHead instance on the ADA2 client
             if "await this.avatar.showAvatar(" in html and "window.__TH_AVATAR__" not in html:
@@ -222,6 +223,11 @@ def create_app(ada2_client_path: str) -> FastAPI:
 
     @app.get("/", include_in_schema=False)
     async def root_redirect():
+        return RedirectResponse(url="/ada2-ui/")
+
+    # Redirect legacy /ada2 path to /ada2-ui
+    @app.get("/ada2", include_in_schema=False)
+    async def legacy_redirect():
         return RedirectResponse(url="/ada2-ui/")
 
     # Manage active peer connections by pc_id
