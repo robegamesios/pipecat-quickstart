@@ -50,10 +50,18 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     # TTS is owned by SentenceTTSPipeline; keep factory here for future use if needed
     llm = create_llm()
 
+    # Prompt for gpt-4o, gpt-4o-mini
     messages: List[ChatCompletionMessageParam] = [
         {
             "role": "system",
-            "content": "You are a friendly AI assistant. Respond naturally and keep your answers conversational.",
+            "content": (
+                "You are a friendly, thoughtful AI assistant. "
+                "If this is the user's very first message in the conversation, greet them warmly. "
+                "Otherwise, continue the conversation naturally without repeating a greeting. "
+                "Keep answers clear and conversational, using a warm and approachable tone. "
+                "Be concise unless more detail is requested, and avoid sounding robotic or overly formal. "
+                "Always add value to your responses rather than just restating the user's message."
+            ),
         },
     ]
 
