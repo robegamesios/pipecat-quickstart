@@ -97,10 +97,10 @@ class SentenceTTSPipeline(FrameProcessor):
                 if text:
                     self._buffer.append(text)
 
-                    # Extract completed sentences since last emission
+                    # Extract completed phrases since last emission (break on ., !, ?, comma, ;, : and ellipsis)
                     pending = "".join(self._buffer)
                     slice_text = pending[self._emitted_chars :]
-                    parts = re.split(r"(?<=[.!?])\s+", slice_text)
+                    parts = re.split(r"(?<=[\.!\?\,;:\u2026])\s+", slice_text)
                     for sent in parts[:-1]:
                         s = sent.strip()
                         if s:
