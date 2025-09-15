@@ -19,6 +19,7 @@ Run the bot using::
     uv run bot.py
 """
 
+import os
 from typing import List
 
 from dotenv import load_dotenv
@@ -46,7 +47,7 @@ load_dotenv(override=True)
 
 async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     stt = create_stt()
-    tts = create_tts()
+    # TTS is owned by SentenceTTSPipeline; keep factory here for future use if needed
     llm = create_llm()
 
     messages: List[ChatCompletionMessageParam] = [
@@ -62,7 +63,9 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     rtvi = RTVIProcessor(config=RTVIConfig(config=[]))
 
     # Collect full LLM response, chunk by sentence, feed TTS + subtitles
-    sentence_tts = SentenceTTSPipeline()
+    # Allow voice selection via env var KOKORO_VOICE_ID (default: af_sarah)
+    voice_id = os.getenv("KOKORO_VOICE_ID", "af_sarah")
+    sentence_tts = SentenceTTSPipeline(voice_id=voice_id)
 
     pipeline = Pipeline(
         [
