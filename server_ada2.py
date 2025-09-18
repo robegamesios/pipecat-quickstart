@@ -19,7 +19,7 @@ import os
 from contextlib import asynccontextmanager
 from typing import Dict
 
-from fastapi import BackgroundTasks, FastAPI
+from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -257,6 +257,10 @@ def create_app(ada2_client_path: str) -> FastAPI:
             background_tasks.add_task(bot_module.bot, runner_args)
 
         answer = connection.get_answer()
+        if answer is None:
+            # If negotiation hasn't produced an answer, signal a server error.
+            # This also narrows the type for static checkers.
+            raise HTTPException(status_code=503, detail="SDP answer not available")
         pcs_map[answer["pc_id"]] = connection
         return answer
 

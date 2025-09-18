@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from typing import Optional
 from functools import lru_cache
 
 from pipecat.audio.vad.silero import SileroVADAnalyzer
@@ -34,11 +35,25 @@ def create_tts(voice_id: str = "af_sarah"):
     )
 
 
+def require_env(name: str, default: Optional[str] = None) -> str:
+    """Fetch a required environment variable as a plain string.
+
+    Provides an optional default to keep type as `str` (not Optional) and
+    raises a clear error if the variable is missing and no default is given.
+    """
+    val = os.getenv(name)
+    if val is None or val == "":
+        if default is not None:
+            return default
+        raise RuntimeError(f"Missing environment variable: {name}")
+    return val
+
+
 def create_llm():
     return OpenAILLMService(
-        model=os.getenv("OPENAI_MODEL"),
-        api_key=os.getenv("OPENAI_API_KEY")
-        )
+        model=require_env("OPENAI_MODEL", default="gpt-4o-mini"),
+        api_key=require_env("OPENAI_API_KEY"),
+    )
 
 
 def create_transport_params():
