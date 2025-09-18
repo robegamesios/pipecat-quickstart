@@ -11,22 +11,57 @@ from pipecat.frames.frames import TTSSpeakFrame
 from pipecat.services.llm_service import FunctionCallParams
 
 
+def _make_wind_fields(*, kph: Optional[float], mph: Optional[float], unit: Literal["celsius", "fahrenheit"]) -> dict:
+    out: dict = {}
+    try:
+        if unit == "celsius":
+            # Prefer KPH for metric
+            if kph is None and mph is not None:
+                kph = mph / 0.621371
+            if kph is not None:
+                out["wind_speed"] = int(round(float(kph)))
+                out["wind_speed_unit"] = "kilometers per hour"
+                out["wind_unit_code"] = "kph"
+        else:
+            # Prefer MPH for imperial
+            if mph is None and kph is not None:
+                mph = kph * 0.621371
+            if mph is not None:
+                out["wind_speed"] = int(round(float(mph)))
+                out["wind_speed_unit"] = "miles per hour"
+                out["wind_unit_code"] = "mph"
+    except Exception:
+        pass
+    return out
+
+
 def _extract_current_cc(data: dict, unit: Literal["celsius", "fahrenheit"]) -> dict:
     cc = (data.get("current_condition") or [{}])[0]
     descs = cc.get("weatherDesc") or []
     desc = (descs[0].get("value") if descs else "").strip() or "Unknown"
     temp = float(cc.get("temp_C") or cc.get("FeelsLikeC")) if unit == "celsius" else float(cc.get("temp_F") or cc.get("FeelsLikeF"))
-    out = {"conditions": desc, "temperature": temp}
+    temp = int(round(temp))
+    out = {
+        "conditions": desc,
+        "temperature": temp,
+        "temperature_unit": "Celsius" if unit == "celsius" else "Fahrenheit",
+    }
     if cc.get("humidity") is not None:
         try:
             out["humidity"] = int(cc.get("humidity"))
         except Exception:
             pass
-    if cc.get("windspeedKmph") is not None:
-        try:
-            out["wind_kph"] = float(cc.get("windspeedKmph"))
-        except Exception:
-            pass
+    wind_kph_val = cc.get("windspeedKmph")
+    wind_miles_val = cc.get("windspeedMiles")
+    try:
+        kph = float(wind_kph_val) if wind_kph_val is not None else None
+    except Exception:
+        kph = None
+    try:
+        mph = float(wind_miles_val) if wind_miles_val is not None else None
+    except Exception:
+        mph = None
+    out.update(_make_wind_fields(kph=kph, mph=mph, unit=unit))
     return out
 
 
@@ -69,9 +104,24 @@ def _extract_period_forecast(
     except Exception:
         temp = None
 
-    out = {"conditions": desc}
+    out = {
+        "conditions": desc,
+        "temperature_unit": "Celsius" if unit == "celsius" else "Fahrenheit",
+    }
     if temp is not None:
-        out["temperature"] = temp
+        out["temperature"] = int(round(temp))
+    # Wind speed in words, selecting mph/kph based on unit
+    wind_kph_val = pick.get("windspeedKmph")
+    wind_miles_val = pick.get("windspeedMiles")
+    try:
+        kph = float(wind_kph_val) if wind_kph_val is not None else None
+    except Exception:
+        kph = None
+    try:
+        mph = float(wind_miles_val) if wind_miles_val is not None else None
+    except Exception:
+        mph = None
+    out.update(_make_wind_fields(kph=kph, mph=mph, unit=unit))
     if pick.get("chanceofrain") is not None:
         try:
             out["chance_of_rain_pct"] = int(pick.get("chanceofrain"))
