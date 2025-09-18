@@ -161,3 +161,15 @@ uv run pcc deploy
 - **Browser permissions**: Allow microphone access when prompted
 - **Connection issues**: Try a different browser or check VPN/firewall settings
 - **Audio issues**: Verify microphone and speakers are working and not muted
+
+### Built-in Tool Calling
+
+This quickstart includes a weather tool that demonstrates OpenAI tool/function calling (uses wttr.in over HTTP):
+
+- Tool: `get_current_weather(location: str, format: "celsius"|"fahrenheit")`
+- Location: any city or place name
+- Example prompt: "What's the weather in Paris in celsius?"
+
+Implementation details:
+- Tool schema and handler live in `modules/tools/weather.py` and call the wttr.in JSON API.
+- The tool is registered in `bot.py` and added to the OpenAI context, so supported models (e.g., `gpt-4o-mini`) can call it.

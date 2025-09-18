@@ -118,6 +118,7 @@ Make sure you ran the copy script:
 - ✅ **Voice Activity Detection** (Silero VAD)
 - ✅ **Multiple Voice Options** (Kokoro voices)
 - ✅ **Fast Response Times** (local processing)
+ - ✅ **Tool Calling (OpenAI)** — includes a local `get_current_weather` tool
 
 ## Voice Options
 
@@ -130,7 +131,7 @@ voice_id="am_adam"     # Male voices: am_adam, am_eric, am_liam
 ## Next Steps
 
 - Modify the system prompt in `bot.py` to change personality
-- Add function calling capabilities
+- Add more tools in `modules/tools/` and register them in `bot.py`
 - Deploy to production with Docker
 - Integrate with your own data sources
 

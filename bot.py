@@ -40,6 +40,7 @@ from modules.services import (
     create_tts,
     create_transport_params,
 )
+from modules.tools import create_weather_tools, register_weather_tool
 from modules.sentence_tts import SentenceTTSPipeline
 
 load_dotenv(override=True)
@@ -49,6 +50,8 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     stt = create_stt()
     # TTS is owned by SentenceTTSPipeline; keep factory here for future use if needed
     llm = create_llm()
+    # Register tool-call handler (wttr.in-backed weather lookup)
+    register_weather_tool(llm)
 
     # Prompt for gpt-4o, gpt-4o-mini
     messages: List[ChatCompletionMessageParam] = [
@@ -60,12 +63,14 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
                 "Otherwise, continue the conversation naturally without repeating a greeting. "
                 "Keep answers clear and conversational, using a warm and approachable tone. "
                 "Be concise unless more detail is requested, and avoid sounding robotic or overly formal. "
-                "Always add value to your responses rather than just restating the user's message."
+                "Always add value to your responses rather than just restating the user's message. "
+                "When asked about weather, call the get_current_weather tool with location and unit."
             ),
         },
     ]
 
-    context = OpenAILLMContext(messages)
+    # Provide tools to the context so the model may call them.
+    context = OpenAILLMContext(messages, tools=create_weather_tools(), tool_choice="auto")
     context_aggregator = llm.create_context_aggregator(context)
 
     rtvi = RTVIProcessor(config=RTVIConfig(config=[]))
