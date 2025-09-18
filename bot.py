@@ -64,7 +64,8 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
                 "Keep answers clear and conversational, using a warm and approachable tone. "
                 "Be concise unless more detail is requested, and avoid sounding robotic or overly formal. "
                 "Always add value to your responses rather than just restating the user's message. "
-                "When asked about weather, call the get_current_weather tool with location and unit."
+                "When asked about weather, call the get_current_weather tool with location and unit, "
+                "and include a 'when' argument like 'now', 'tomorrow morning', or 'tonight' when applicable."
             ),
         },
     ]

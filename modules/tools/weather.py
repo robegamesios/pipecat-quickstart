@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import httpx
-from typing import Literal
+from typing import Literal, Optional
 
 from loguru import logger
 
@@ -9,6 +9,106 @@ from pipecat.adapters.schemas.function_schema import FunctionSchema
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
 from pipecat.frames.frames import TTSSpeakFrame
 from pipecat.services.llm_service import FunctionCallParams
+
+
+def _extract_current_cc(data: dict, unit: Literal["celsius", "fahrenheit"]) -> dict:
+    cc = (data.get("current_condition") or [{}])[0]
+    descs = cc.get("weatherDesc") or []
+    desc = (descs[0].get("value") if descs else "").strip() or "Unknown"
+    temp = float(cc.get("temp_C") or cc.get("FeelsLikeC")) if unit == "celsius" else float(cc.get("temp_F") or cc.get("FeelsLikeF"))
+    out = {"conditions": desc, "temperature": temp}
+    if cc.get("humidity") is not None:
+        try:
+            out["humidity"] = int(cc.get("humidity"))
+        except Exception:
+            pass
+    if cc.get("windspeedKmph") is not None:
+        try:
+            out["wind_kph"] = float(cc.get("windspeedKmph"))
+        except Exception:
+            pass
+    return out
+
+
+def _extract_period_forecast(
+    data: dict, *, day_index: int, part_of_day: Optional[str], unit: Literal["celsius", "fahrenheit"]
+) -> Optional[dict]:
+    weather = data.get("weather") or []
+    if not weather or day_index >= len(weather):
+        return None
+    day = weather[day_index]
+    hourly = day.get("hourly") or []
+
+    # Map parts of day to wttr.in 3-hour buckets
+    targets = {
+        "morning": ["600", "900"],
+        "afternoon": ["1200", "1500"],
+        "evening": ["1800"],
+        "night": ["2100", "0"],
+        None: ["1200"],  # default to noon snapshot if no part specified
+    }
+    wanted = targets.get(part_of_day, targets[None])
+
+    # Pick the first matching bucket present; otherwise take the middle bucket
+    pick = None
+    by_time = {str(h.get("time")): h for h in hourly}
+    for t in wanted:
+        if t in by_time:
+            pick = by_time[t]
+            break
+    if pick is None and hourly:
+        pick = hourly[min(len(hourly) // 2, len(hourly) - 1)]
+    if pick is None:
+        return None
+
+    descs = pick.get("weatherDesc") or []
+    desc = (descs[0].get("value") if descs else "").strip() or "Unknown"
+    temp_key = "tempC" if unit == "celsius" else "tempF"
+    try:
+        temp = float(pick.get(temp_key))
+    except Exception:
+        temp = None
+
+    out = {"conditions": desc}
+    if temp is not None:
+        out["temperature"] = temp
+    if pick.get("chanceofrain") is not None:
+        try:
+            out["chance_of_rain_pct"] = int(pick.get("chanceofrain"))
+        except Exception:
+            pass
+    return out
+
+
+def _parse_when(when: Optional[str]) -> tuple[int, Optional[str], str]:
+    """Return (day_index, part_of_day, label) from a human-ish 'when' string.
+
+    Supported examples: 'now', 'today', 'tomorrow', 'tomorrow morning',
+    'tonight', 'this evening', 'tomorrow night'. Defaults to current conditions.
+    """
+    if not when:
+        return 0, None, "now"
+    w = when.lower().strip()
+    if w in ("now", "current", "right now"):
+        return 0, None, "now"
+    day_index = 0
+    part: Optional[str] = None
+    if "tomorrow" in w:
+        day_index = 1
+    elif "day after" in w or "in 2 days" in w:
+        day_index = 2
+    elif "today" in w:
+        day_index = 0
+
+    if any(p in w for p in ["morning", "am"]):
+        part = "morning"
+    elif any(p in w for p in ["afternoon", "pm"]):
+        part = "afternoon"
+    elif any(p in w for p in ["evening", "sunset"]):
+        part = "evening"
+    elif any(p in w for p in ["night", "tonight"]):
+        part = "night"
+    return day_index, part, w
 
 
 async def fetch_weather(params: FunctionCallParams) -> None:
@@ -21,6 +121,7 @@ async def fetch_weather(params: FunctionCallParams) -> None:
     args = params.arguments or {}
     location = str(args.get("location", "")).strip()
     unit: Literal["celsius", "fahrenheit"] = args.get("format", "fahrenheit")  # type: ignore
+    when: Optional[str] = args.get("when")
 
     if not location:
         await params.result_callback({"error": "missing_location"})
@@ -47,29 +148,18 @@ async def fetch_weather(params: FunctionCallParams) -> None:
         return
 
     try:
-        cc = (data.get("current_condition") or [{}])[0]
-        descs = cc.get("weatherDesc") or []
-        desc = (descs[0].get("value") if descs else "").strip() or "Unknown"
-        if unit == "celsius":
-            temperature = float(cc.get("temp_C") or cc.get("FeelsLikeC"))
+        day_index, part, label = _parse_when(when)
+        if when and label != "now":
+            snap = _extract_period_forecast(data, day_index=day_index, part_of_day=part, unit=unit)
+            if snap is None:
+                # Fall back to current
+                snap = _extract_current_cc(data, unit)
+                snap["note"] = "forecast_unavailable_fallback_to_current"
+            result = {"location": location, "format": unit, "when": label, **snap}
         else:
-            temperature = float(cc.get("temp_F") or cc.get("FeelsLikeF"))
+            snap = _extract_current_cc(data, unit)
+            result = {"location": location, "format": unit, "when": "now", **snap}
 
-        humidity = int(cc.get("humidity")) if cc.get("humidity") is not None else None
-        wind_kph = (
-            float(cc.get("windspeedKmph")) if cc.get("windspeedKmph") is not None else None
-        )
-
-        result = {
-            "location": location,
-            "format": unit,
-            "conditions": desc,
-            "temperature": temperature,
-        }
-        if humidity is not None:
-            result["humidity"] = humidity
-        if wind_kph is not None:
-            result["wind_kph"] = wind_kph
         await params.result_callback(result)
     except Exception as e:
         logger.warning(f"Weather parse failed for {location}: {e}")
@@ -93,6 +183,10 @@ def create_weather_tools() -> ToolsSchema:
                 "type": "string",
                 "enum": ["celsius", "fahrenheit"],
                 "description": "The temperature unit to use. Infer this from the user's location.",
+            },
+            "when": {
+                "type": "string",
+                "description": "Optional: when to check, e.g. 'now', 'tomorrow morning', 'tonight'.",
             },
         },
         required=["location", "format"],
