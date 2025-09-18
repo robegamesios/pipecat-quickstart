@@ -93,6 +93,8 @@ def create_app(ada2_client_path: str) -> FastAPI:
             injection = (
                 "<script>\n"
                 "(function(){\n"
+                "  // Reduce browser console noise: keep only errors\n"
+                "  try{ const __noop__=()=>{}; console.log=__noop__; console.info=__noop__; console.debug=__noop__; console.warn=__noop__; }catch(e){}\n"
                 "  const OrigPC = window.RTCPeerConnection;\n"
                 "  if(!OrigPC) return;\n"
                 "  // Ensure lipsync processor is loaded when avatar is ready. Fallback to shim if module shape differs.\n"
