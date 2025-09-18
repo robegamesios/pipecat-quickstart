@@ -23,18 +23,8 @@ import os
 from typing import List
 
 from dotenv import load_dotenv
-from loguru import logger
 from openai.types.chat import ChatCompletionMessageParam
 from pipecat.frames.frames import LLMRunFrame
-
-print("🚀 Starting Pipecat bot...")
-print("⏳ Loading models and imports (20 seconds first run only)\n")
-
-logger.info("Loading Silero VAD model...")
-from pipecat.audio.vad.silero import SileroVADAnalyzer
-
-logger.info("✅ Silero VAD model loaded")
-logger.info("Loading pipeline components...")
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
@@ -42,43 +32,36 @@ from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
 from pipecat.processors.frameworks.rtvi import RTVIConfig, RTVIObserver, RTVIProcessor
 from pipecat.runner.types import RunnerArguments
 from pipecat.runner.utils import create_transport
-from pipecat.services.kokoro.tts import KokoroTTSService
-from pipecat.services.moonshine.stt import MoonshineSTTService
-from pipecat.transcriptions.language import Language
-from pipecat.services.openai.llm import OpenAILLMService
-from pipecat.transports.base_transport import BaseTransport, TransportParams
-from pipecat.transports.daily.transport import DailyParams
+from pipecat.transports.base_transport import BaseTransport
 
-logger.info("✅ All components loaded successfully!")
+from modules.services import (
+    create_llm,
+    create_stt,
+    create_tts,
+    create_transport_params,
+)
+from modules.sentence_tts import SentenceTTSPipeline
 
 load_dotenv(override=True)
 
 
 async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
-    logger.info(f"Starting bot")
+    stt = create_stt()
+    # TTS is owned by SentenceTTSPipeline; keep factory here for future use if needed
+    llm = create_llm()
 
-    vad_analyzer = SileroVADAnalyzer()
-
-    stt = MoonshineSTTService(
-        model_name="moonshine/tiny",
-        language=Language.EN,
-        vad_enabled=True,
-        vad_analyzer=vad_analyzer,
-    )
-
-    # Local Kokoro TTS (no API key required)  
-    tts = KokoroTTSService(
-        model_path="assets/kokoro-v1.0.onnx",
-        voices_path="assets/voices-v1.0.bin",
-        voice_id="af_sarah",
-    )
-
-    llm = OpenAILLMService(api_key=os.getenv("OPENAI_API_KEY"))
-
+    # Prompt for gpt-4o, gpt-4o-mini
     messages: List[ChatCompletionMessageParam] = [
         {
             "role": "system",
-            "content": "You are a friendly AI assistant. Respond naturally and keep your answers conversational.",
+            "content": (
+                "You are a friendly, thoughtful AI assistant. "
+                "If this is the user's very first message in the conversation, greet them warmly. "
+                "Otherwise, continue the conversation naturally without repeating a greeting. "
+                "Keep answers clear and conversational, using a warm and approachable tone. "
+                "Be concise unless more detail is requested, and avoid sounding robotic or overly formal. "
+                "Always add value to your responses rather than just restating the user's message."
+            ),
         },
     ]
 
@@ -87,16 +70,21 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
 
     rtvi = RTVIProcessor(config=RTVIConfig(config=[]))
 
+    # Collect full LLM response, chunk by sentence, feed TTS + subtitles
+    # Allow voice selection via env var KOKORO_VOICE_ID (default: af_sarah)
+    voice_id = os.getenv("KOKORO_VOICE_ID", "af_sarah")
+    sentence_tts = SentenceTTSPipeline(voice_id=voice_id)
+
     pipeline = Pipeline(
         [
-            transport.input(),  # Transport user input
-            rtvi,  # RTVI processor
+            transport.input(),
+            rtvi,
             stt,
-            context_aggregator.user(),  # User responses
-            llm,  # LLM
-            tts,  # TTS
-            transport.output(),  # Transport bot output
-            context_aggregator.assistant(),  # Assistant spoken responses
+            context_aggregator.user(),
+            llm,
+            sentence_tts,
+            transport.output(),
+            context_aggregator.assistant(),
         ]
     )
 
@@ -111,14 +99,12 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
 
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
-        logger.info(f"Client connected")
         # Kick off the conversation.
         messages.append({"role": "system", "content": "Say hello and briefly introduce yourself."})
         await task.queue_frames([LLMRunFrame()])
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
-        logger.info(f"Client disconnected")
         await task.cancel()
 
     runner = PipelineRunner(handle_sigint=runner_args.handle_sigint)
@@ -129,20 +115,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
 async def bot(runner_args: RunnerArguments):
     """Main bot entry point for the bot starter."""
 
-    transport_params = {
-        "daily": lambda: DailyParams(
-            audio_in_enabled=True,
-            audio_out_enabled=True,
-            vad_analyzer=SileroVADAnalyzer(),
-        ),
-        "webrtc": lambda: TransportParams(
-            audio_in_enabled=True,
-            audio_out_enabled=True,
-            vad_analyzer=SileroVADAnalyzer(),
-        ),
-    }
-
-    transport = await create_transport(runner_args, transport_params)
+    transport = await create_transport(runner_args, create_transport_params())
 
     await run_bot(transport, runner_args)
 
