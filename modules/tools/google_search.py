@@ -84,9 +84,9 @@ async def google_search(params: FunctionCallParams) -> None:
         results.append(
             {
                 "title": it.get("title"),
-                "link": it.get("link"),
+                # omit full URL to discourage the model from speaking links
                 "snippet": it.get("snippet"),
-                "display_link": it.get("displayLink"),
+                "source": it.get("displayLink"),
             }
         )
 

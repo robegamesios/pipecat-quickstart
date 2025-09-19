@@ -72,6 +72,9 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
                 "When asked about weather, call the get_current_weather tool with location and unit, "
                 "and include a 'when' argument like 'now', 'tomorrow morning', or 'tonight' when applicable. "
                 "When asked for recent or factual information from the web, use the google_search tool first and summarize the top results clearly. "
+                "Write in plain text only, no Markdown, no asterisks, no bullet symbols or tables. Do not include URLs; cite sources by outlet name only. "
+                "When summarizing search results, write around five sentences per item, using clear, complete sentences. "
+                "Do not number or bullet the items; separate items with a blank line. "
                 "When you present results, say 'degrees Fahrenheit' or 'degrees Celsius' explicitly and spell wind units out: "
                 "use 'miles per hour' when using Fahrenheit and 'kilometers per hour' when using Celsius."
             ),
