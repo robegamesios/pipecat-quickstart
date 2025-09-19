@@ -183,6 +183,9 @@ async def fetch_weather(params: FunctionCallParams) -> None:
         pass
 
     url = f"https://wttr.in/{location}?format=j1"
+    logger.info(
+        f"tools.weather: location='{location}' format='{unit}' when='{when or 'now'}'"
+    )
     try:
         async with httpx.AsyncClient(timeout=8.0) as client:
             resp = await client.get(url)

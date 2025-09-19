@@ -45,6 +45,7 @@ from modules.tools import (
     register_weather_tool,
     register_google_search_tool,
 )
+from modules.tool_logger import ToolUsageLogger
 from modules.sentence_tts import SentenceTTSPipeline
 
 load_dotenv(override=True)
@@ -91,6 +92,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     # Allow voice selection via env var KOKORO_VOICE_ID (default: af_sarah)
     voice_id = os.getenv("KOKORO_VOICE_ID", "af_sarah")
     sentence_tts = SentenceTTSPipeline(voice_id=voice_id)
+    tool_logger = ToolUsageLogger()
 
     pipeline = Pipeline(
         [
@@ -100,6 +102,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
             context_aggregator.user(),
             llm,
             sentence_tts,
+            tool_logger,
             transport.output(),
             context_aggregator.assistant(),
         ]

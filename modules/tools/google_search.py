@@ -68,6 +68,10 @@ async def google_search(params: FunctionCallParams) -> None:
 
     url = f"{API_URL}?{urllib.parse.urlencode(q)}"
 
+    logger.info(
+        f"tools.google_search: query='{query}' max_results={max_results} date_restrict={date_restrict} safe={safe} gl={gl} hl={hl}"
+    )
+
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(url)
