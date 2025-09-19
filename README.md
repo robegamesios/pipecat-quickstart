@@ -164,12 +164,22 @@ uv run pcc deploy
 
 ### Built-in Tool Calling
 
-This quickstart includes a weather tool that demonstrates OpenAI tool/function calling (uses wttr.in over HTTP):
+This quickstart includes two tools that demonstrate OpenAI tool/function calling:
 
-- Tool: `get_current_weather(location: str, format: "celsius"|"fahrenheit")`
+- Weather: `get_current_weather(location: str, format: "celsius"|"fahrenheit", when?: str)`
 - Location: any city or place name
 - Example prompt: "What's the weather in Paris in celsius?"
 
 Implementation details:
 - Tool schema and handler live in `modules/tools/weather.py` and call the wttr.in JSON API.
 - The tool is registered in `bot.py` and added to the OpenAI context, so supported models (e.g., `gpt-4o-mini`) can call it.
+
+- Google Search: `google_search(query: str, max_results?: int, date_restrict?: str, safe?: "off"|"active", gl?: str, hl?: str)`
+- Example prompt: "Find the latest news about SpaceX this week."
+
+To enable Google Search, set the following in your `.env`:
+
+```
+GOOGLE_API_KEY=your_google_api_key
+GOOGLE_CSE_ID=your_custom_search_engine_id
+```

@@ -40,7 +40,11 @@ from modules.services import (
     create_tts,
     create_transport_params,
 )
-from modules.tools import create_weather_tools, register_weather_tool
+from modules.tools import (
+    create_all_tools,
+    register_weather_tool,
+    register_google_search_tool,
+)
 from modules.sentence_tts import SentenceTTSPipeline
 
 load_dotenv(override=True)
@@ -50,8 +54,9 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     stt = create_stt()
     # TTS is owned by SentenceTTSPipeline; keep factory here for future use if needed
     llm = create_llm()
-    # Register tool-call handler (wttr.in-backed weather lookup)
+    # Register tool-call handlers (weather + google search)
     register_weather_tool(llm)
+    register_google_search_tool(llm)
 
     # Prompt for gpt-4o, gpt-4o-mini
     messages: List[ChatCompletionMessageParam] = [
@@ -66,6 +71,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
                 "Always add value to your responses rather than just restating the user's message. "
                 "When asked about weather, call the get_current_weather tool with location and unit, "
                 "and include a 'when' argument like 'now', 'tomorrow morning', or 'tonight' when applicable. "
+                "When asked for recent or factual information from the web, use the google_search tool first and summarize the top results clearly. "
                 "When you present results, say 'degrees Fahrenheit' or 'degrees Celsius' explicitly and spell wind units out: "
                 "use 'miles per hour' when using Fahrenheit and 'kilometers per hour' when using Celsius."
             ),
@@ -73,7 +79,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     ]
 
     # Provide tools to the context so the model may call them.
-    context = OpenAILLMContext(messages, tools=create_weather_tools(), tool_choice="auto")
+    context = OpenAILLMContext(messages, tools=create_all_tools(), tool_choice="auto")
     context_aggregator = llm.create_context_aggregator(context)
 
     rtvi = RTVIProcessor(config=RTVIConfig(config=[]))
