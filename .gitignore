@@ -199,6 +199,27 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
+# macOS system files
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Local AI tooling settings
+.claude/
+
+# Local assets backups (do not commit large models/media)
+assets.backup/
+
+# Large model/media binaries in assets (keep small static assets tracked)
+assets/**/*.onnx
+assets/**/*.bin
+
+# ADA2 demo UI: ignore generated bundle artifacts
+assets/ada2-client/assets/index-*.css
+assets/ada2-client/assets/index-*.js
+assets/ada2-client/assets/geist-*.woff2
+
 # Streamlit
 .streamlit/secrets.toml
 

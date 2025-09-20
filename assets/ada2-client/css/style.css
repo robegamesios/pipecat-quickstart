@@ -1,0 +1,375 @@
+body,
+html {
+  width: 100vw;
+  height: 100vh;
+  margin: 0;
+  padding: 0;
+  position: relative;
+  background-color: #202020;
+  color: white;
+  overflow: hidden;
+}
+
+#avatar {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+#controls {
+  display: block;
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  right: 10px;
+  height: 90px;
+}
+
+#textbox {
+  display: block;
+  width: 100%;
+  height: 40px;
+  padding: 0 10px;
+  font-family: Arial;
+  font-size: 20px;
+  box-sizing: border-box;
+}
+
+#model-selection {
+  display: flex;
+  justify-content: flex-start;
+  margin-top: 8px;
+}
+
+#model-dropdown {
+  background-color: #4A5568;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 14px;
+  font-family: Arial;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+  outline: none;
+}
+
+#model-dropdown:hover {
+  background-color: #2D3748;
+}
+
+#model-dropdown:focus {
+  background-color: #2D3748;
+  box-shadow: 0 0 0 2px rgba(66, 153, 225, 0.6);
+}
+
+#button-row {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  margin-top: 10px;
+  gap: 10px;
+}
+
+#speak,
+#chat,
+#document-widget-btn,
+#chatgpt-widget-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 50px;
+  height: 40px;
+  font-size: 20px;
+  background-color: #4A5568;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+#speak:hover,
+#chat:hover,
+#document-widget-btn:hover,
+#chatgpt-widget-btn:hover {
+  background-color: #2D3748;
+}
+
+#speak:active,
+#chat:active,
+#document-widget-btn:active,
+#chatgpt-widget-btn:active {
+  background-color: #1A202C;
+}
+
+#info {
+  display: block;
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  right: 10px;
+  height: 50px;
+  font-family: Arial;
+  font-size: 20px;
+}
+
+#subtitles {
+  position: fixed;
+  bottom: 4vh;
+  left: 50%;
+  transform: translateX(-50%);
+  width: calc(100% - 40px);
+  max-width: 800px;
+  height: auto;
+  max-height: 15vh;
+  overflow-y: auto;
+  padding: 6px 10px;
+  text-align: center;
+  box-sizing: border-box;
+  z-index: 1;
+  font-family: Arial;
+  font-size: 32px;
+}
+
+#stop-speech-button {
+  position: absolute;
+  top: 60px;
+  left: 10px;
+  z-index: 50;
+  background: rgba(244, 67, 54, 0.9);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  width: 50px;
+  height: 40px;
+  font-size: 20px;
+  font-weight: bold;
+  cursor: pointer;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(10px);
+  box-shadow: 0 4px 20px rgba(244, 67, 54, 0.4);
+  transition: all 0.3s ease;
+  font-family: inherit;
+}
+
+#stop-speech-button.visible {
+  display: flex;
+}
+
+#stop-speech-button:hover {
+  background: rgba(244, 67, 54, 1);
+  transform: scale(1.05);
+}
+
+#stop-speech-button:active {
+  transform: scale(0.95);
+}
+
+#thinking-icon {
+  position: absolute;
+  top: 60px;
+  left: 10px;
+  z-index: 50;
+  background: rgba(30, 30, 30, 0.9);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  width: 50px;
+  height: 40px;
+  cursor: default;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(10px);
+  box-shadow: 0 4px 20px rgba(30, 30, 30, 0.4);
+  transition: all 0.3s ease;
+}
+
+#thinking-icon.visible {
+  display: flex;
+}
+
+.thinking-spinner {
+  position: relative;
+  width: 32px;
+  height: 32px;
+}
+
+.spinner-line {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 2px;
+  height: 8px;
+  background: #ff9f5c;
+  border-radius: 1px;
+  transform-origin: 1px 12px;
+  opacity: 0;
+  animation: thinking-pulse 2s ease-in-out infinite;
+}
+
+.spinner-line:nth-child(1) {
+  transform: translate(-50%, -100%) rotate(0deg);
+  animation-delay: 0s;
+}
+
+.spinner-line:nth-child(2) {
+  transform: translate(-50%, -100%) rotate(45deg);
+  animation-delay: 0.25s;
+}
+
+.spinner-line:nth-child(3) {
+  transform: translate(-50%, -100%) rotate(90deg);
+  animation-delay: 0.5s;
+}
+
+.spinner-line:nth-child(4) {
+  transform: translate(-50%, -100%) rotate(135deg);
+  animation-delay: 0.75s;
+}
+
+.spinner-line:nth-child(5) {
+  transform: translate(-50%, -100%) rotate(180deg);
+  animation-delay: 1s;
+}
+
+.spinner-line:nth-child(6) {
+  transform: translate(-50%, -100%) rotate(225deg);
+  animation-delay: 1.25s;
+}
+
+.spinner-line:nth-child(7) {
+  transform: translate(-50%, -100%) rotate(270deg);
+  animation-delay: 1.5s;
+}
+
+.spinner-line:nth-child(8) {
+  transform: translate(-50%, -100%) rotate(315deg);
+  animation-delay: 1.75s;
+}
+
+@keyframes thinking-pulse {
+
+  0%,
+  75%,
+  100% {
+    opacity: 0;
+  }
+
+  25% {
+    opacity: 1;
+  }
+}
+
+#chat-status {
+  position: absolute;
+  top: 60px;
+  left: 10px;
+  right: 10px;
+  background: rgba(0, 0, 0, 0.8);
+  color: white;
+  padding: 8px 12px;
+  border-radius: 4px;
+  font-family: Arial;
+  font-size: 14px;
+  z-index: 40;
+  display: none;
+}
+
+/* Adjust layout when any widget is open - fit everything in left half */
+body.widget-visible {
+  max-width: none !important;
+  margin: 0 !important;
+  width: 100vw !important;
+}
+
+body.widget-visible #avatar {
+  width: 60vw !important;
+  max-width: 60vw !important;
+  margin-left: -30vw !important;
+  transition: width 0.3s ease, margin-left 0.3s ease !important;
+}
+
+body.widget-visible #controls {
+  width: calc(60vw - 80px) !important;
+  transform: translateX(-20vw) !important;
+  transition: width 0.3s ease, transform 0.3s ease !important;
+}
+
+body.widget-visible #button-row {
+  justify-content: flex-end !important;
+  margin-right: 150px !important;
+}
+
+body.widget-visible #textbox {
+  width: calc(50vw - 80px) !important;
+  transition: width 0.3s ease !important;
+}
+
+body.widget-visible #subtitles {
+  left: 50px !important;
+  width: calc(50vw - 80px) !important;
+  transform: none !important;
+  transition: width 0.3s ease, left 0.3s ease !important;
+}
+
+/* Position stop button and thinking icon to be visible when chat window is open */
+body.widget-visible #stop-speech-button {
+  z-index: 10000 !important;
+  transform: translateX(-20vw) !important;
+}
+
+body.widget-visible #thinking-icon {
+  z-index: 10000 !important;
+  transform: translateX(-20vw) !important;
+}
+
+/* Map widget styles - use same positioning as chat widget */
+body.map-widget-visible {
+  max-width: none !important;
+  margin: 0 !important;
+  width: 100vw !important;
+}
+
+body.map-widget-visible #avatar {
+  width: 60vw !important;
+  max-width: 60vw !important;
+  margin-left: -30vw !important;
+  transition: width 0.3s ease, margin-left 0.3s ease !important;
+}
+
+body.map-widget-visible #controls {
+  width: calc(60vw - 80px) !important;
+  transform: translateX(-20vw) !important;
+  transition: width 0.3s ease, transform 0.3s ease !important;
+}
+
+body.map-widget-visible #button-row {
+  justify-content: flex-end !important;
+  margin-right: 150px !important;
+}
+
+body.map-widget-visible #textbox {
+  width: calc(50vw - 80px) !important;
+  transition: width 0.3s ease !important;
+}
+
+body.map-widget-visible #subtitles {
+  left: 50px !important;
+  width: calc(50vw - 80px) !important;
+  transform: none !important;
+  transition: width 0.3s ease, left 0.3s ease !important;
+}
+
+body.map-widget-visible #stop-speech-button {
+  z-index: 10000 !important;
+  transform: translateX(-20vw) !important;
+}
+
+body.map-widget-visible #thinking-icon {
+  z-index: 10000 !important;
+  transform: translateX(-20vw) !important;
+}
