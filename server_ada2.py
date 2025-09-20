@@ -304,8 +304,14 @@ def main():
     parser.add_argument("--port", type=int, default=7860)
     parser.add_argument(
         "--ada2-path",
-        default=os.getenv("ADA2_CLIENT_PATH", "/Users/robenriquez/Documents/00_Github/ADA2/pipecat-client"),
-        help="Path to ADA2/pipecat-client directory",
+        default=os.getenv(
+            "ADA2_CLIENT_PATH",
+            os.path.join(os.path.dirname(__file__), "assets", "ada2-client"),
+        ),
+        help=(
+            "Path to ADA2/pipecat-client build directory. "
+            "Defaults to assets/ada2-client inside this project."
+        ),
     )
     args = parser.parse_args()
 
