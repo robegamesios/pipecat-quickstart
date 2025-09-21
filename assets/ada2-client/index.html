@@ -147,6 +147,11 @@
             if (idle >= this.IDLE_RESET_MS && toolExpired) {
               this.toolActive = false;
               this.updateStatus(this.connectedLabel);
+
+              // also clear subtitles
+              const box = this.getSubtitlesBox();
+              box.textContent = '';
+              box.style.display = 'none';
             }
           }, this.IDLE_RESET_MS);
         };
