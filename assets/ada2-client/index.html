@@ -119,14 +119,38 @@
         this.isConnected = false;
         this.isSpeaking = false;
         this.toolActive = false;
-        // this.connectedLabel = '✅ Connected to Voice Chat';
-        this.connectedLabel = '';
+        this.connectedLabel = '✅ Connected to Voice Chat';
         this.isUserTalking = false;
         this._lastStatus = '';
         
         this.statusEl = document.getElementById('status');
         this.connectBtn = document.getElementById('connect-btn');
         
+        this._idleTimer = null;
+        this._lastActivityAt = 0;
+        this.IDLE_RESET_MS = 1200;
+
+        this._bumpActivity = () => {
+          this._lastActivityAt = performance.now();
+          if (this._idleTimer) { clearTimeout(this._idleTimer); this._idleTimer = null; }
+        };
+
+        this._toolHoldUntil = 0;
+        this.TOOL_HOLD_MS = 1200;
+
+        this._scheduleIdleReset = () => {
+          if (this._idleTimer) { clearTimeout(this._idleTimer); }
+          this._idleTimer = setTimeout(() => {
+            const now = performance.now();
+            const idle = now - this._lastActivityAt;
+            const toolExpired = now >= this._toolHoldUntil;
+            if (idle >= this.IDLE_RESET_MS && toolExpired) {
+              this.toolActive = false;
+              this.updateStatus(this.connectedLabel);
+            }
+          }, this.IDLE_RESET_MS);
+        };
+
         this.init();
       }
       
@@ -310,12 +334,6 @@
           console.warn('Could not create app data channel:', e);
         }
 
-        // Proactively create the app data channel so server can receive it
-        try {
-          const dc = this.peerConnection.createDataChannel('app', { ordered: true });
-          this.attachAppChannel(dc);
-        } catch (e) { console.warn('DataChannel create failed', e); }
-
         // Create offer and connect to pipecat server
         const offer = await this.peerConnection.createOffer();
         await this.peerConnection.setLocalDescription(offer);
@@ -361,7 +379,6 @@
             'overflow:hidden',
             'display:none',
             '-webkit-line-clamp:3',
-            'display:-webkit-box',
             '-webkit-box-orient: vertical'
           ].join(';');
           document.body.appendChild(el);
@@ -383,26 +400,27 @@
           window.__ttsMeta = window.__ttsMeta || {};
           switch (msg && msg.type) {
             case 'subtitle_start':
+              this._bumpActivity();
               box.textContent = '';
               box.style.display = '-webkit-box';
               break;
             case 'subtitle_delta':
+              this._bumpActivity();
               box.textContent = (msg.text || '');
               box.style.display = '-webkit-box';
               break;
             case 'subtitle_end':
+              this._bumpActivity();
+              this.toolActive = false;
+              this._scheduleIdleReset();
               box.textContent = (msg.text || '');
               box.style.display = (box.textContent ? '-webkit-box' : 'none');
-              // End of spoken turn: if a tool was active, reset to connected label
-              if (this.toolActive) {
-                this.toolActive = false;
-                this.updateStatus(this.connectedLabel);
-              } else {
-                this.updateStatus(this.connectedLabel);
-              }
               break;
             case 'tts_interrupt':
-              this.updateStatus('👤 User...');
+              this._bumpActivity();
+              if (!this.toolActive && !this.isSpeaking) {
+                this.updateStatus('👤 User...');
+              }
               break;
             case 'log_tool': {
               const phase = (msg.phase || '');
@@ -412,18 +430,23 @@
                           : (name === 'get_current_weather') ? '☀️ Weather Search...'
                           : 'Tool';
               this.toolActive = true;
+              this._toolHoldUntil = performance.now() + this.TOOL_HOLD_MS;
               this.updateStatus(label);
+              this._bumpActivity();
               break;
             }
             case 'tts_sentence_start': {
+              this._bumpActivity();
               const id = msg.id; window.__ttsBuf[id] = []; window.__ttsMeta[id] = { text: msg.text||'', sample_rate: msg.sample_rate||24000 };
               break;
             }
             case 'tts_sentence_chunk': {
+              this._bumpActivity();
               const id = msg.id; if (window.__ttsBuf[id]){ const buf = b64ToBuf(msg.chunk); if (buf) window.__ttsBuf[id].push(buf); }
               break;
             }
             case 'tts_sentence_end': {
+              this._bumpActivity();
               const id = msg.id; (async () => {
                 const bufs = window.__ttsBuf[id] || []; const meta = window.__ttsMeta[id] || {}; delete window.__ttsBuf[id]; delete window.__ttsMeta[id];
                 if (!bufs.length) return;
