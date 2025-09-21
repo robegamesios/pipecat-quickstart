@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import httpx
-from typing import Literal, Optional
+from typing import Any, Dict, Literal, Optional
 
 from loguru import logger
 
@@ -34,36 +34,64 @@ def _make_wind_fields(*, kph: Optional[float], mph: Optional[float], unit: Liter
         pass
     return out
 
+def _as_float(x: Any) -> Optional[float]:
+    try:
+        return float(x) if x is not None else None
+    except (TypeError, ValueError):
+        return None
 
-def _extract_current_cc(data: dict, unit: Literal["celsius", "fahrenheit"]) -> dict:
-    cc = (data.get("current_condition") or [{}])[0]
+def _as_int(x: Any) -> Optional[int]:
+    try:
+        # int("45") and int(45.2) both OK; None guarded above
+        return int(x) if x is not None else None
+    except (TypeError, ValueError):
+        return None
+
+def _extract_current_cc(data: Dict[str, Any], unit: Literal["celsius", "fahrenheit"]) -> Dict[str, Any]:
+    # current_condition is usually a list with one dict
+    cc_list = data.get("current_condition") or []
+    cc = cc_list[0] if isinstance(cc_list, list) and cc_list else {}
+
+    # Description
     descs = cc.get("weatherDesc") or []
-    desc = (descs[0].get("value") if descs else "").strip() or "Unknown"
-    temp = float(cc.get("temp_C") or cc.get("FeelsLikeC")) if unit == "celsius" else float(cc.get("temp_F") or cc.get("FeelsLikeF"))
-    temp = int(round(temp))
-    out = {
+    if isinstance(descs, list) and descs and isinstance(descs[0], dict):
+        desc_raw = (descs[0].get("value") or "")
+    else:
+        desc_raw = ""
+    desc = (str(desc_raw).strip() or "Unknown")
+
+    # Temperature (prefers temp_* then falls back to FeelsLike*)
+    if unit == "celsius":
+        raw_temp = cc.get("temp_C")
+        if raw_temp is None:
+            raw_temp = cc.get("FeelsLikeC")
+        unit_label = "Celsius"
+    else:
+        raw_temp = cc.get("temp_F")
+        if raw_temp is None:
+            raw_temp = cc.get("FeelsLikeF")
+        unit_label = "Fahrenheit"
+
+    ftemp = _as_float(raw_temp)
+    temp = int(round(ftemp)) if ftemp is not None else None
+
+    out: Dict[str, Any] = {
         "conditions": desc,
         "temperature": temp,
-        "temperature_unit": "Celsius" if unit == "celsius" else "Fahrenheit",
+        "temperature_unit": unit_label,
     }
-    if cc.get("humidity") is not None:
-        try:
-            out["humidity"] = int(cc.get("humidity"))
-        except Exception:
-            pass
-    wind_kph_val = cc.get("windspeedKmph")
-    wind_miles_val = cc.get("windspeedMiles")
-    try:
-        kph = float(wind_kph_val) if wind_kph_val is not None else None
-    except Exception:
-        kph = None
-    try:
-        mph = float(wind_miles_val) if wind_miles_val is not None else None
-    except Exception:
-        mph = None
-    out.update(_make_wind_fields(kph=kph, mph=mph, unit=unit))
-    return out
 
+    # Humidity
+    hum = _as_int(cc.get("humidity"))
+    if hum is not None:
+        out["humidity"] = hum
+
+    # Wind inputs (both optional; your _make_wind_fields can decide how to present)
+    kph = _as_float(cc.get("windspeedKmph"))
+    mph = _as_float(cc.get("windspeedMiles"))
+    out.update(_make_wind_fields(kph=kph, mph=mph, unit=unit))
+
+    return out
 
 def _extract_period_forecast(
     data: dict, *, day_index: int, part_of_day: Optional[str], unit: Literal["celsius", "fahrenheit"]
