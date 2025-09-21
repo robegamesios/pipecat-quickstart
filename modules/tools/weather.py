@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+from datetime import datetime, timedelta
 import httpx
 from typing import Any, Dict, Literal, Optional, Tuple
 
@@ -140,6 +142,7 @@ def _extract_period_forecast(
     targets = {
         "morning": ["600", "900"],
         "afternoon": ["1200", "1500"],
+        "noon": ["1200"],
         "evening": ["1800"],
         "night": ["2100", "0"],
         None: ["1200"],  # default to noon snapshot if no part specified
@@ -199,35 +202,97 @@ def _extract_period_forecast(
 # When parsing
 # -----------------------------
 
+_WEEKDAY_ALIASES = {
+    "monday": 0, "mon": 0,
+    "tuesday": 1, "tue": 1, "tues": 1,
+    "wednesday": 2, "wed": 2,
+    "thursday": 3, "thu": 3, "thur": 3, "thurs": 3,
+    "friday": 4, "fri": 4,
+    "saturday": 5, "sat": 5,
+    "sunday": 6, "sun": 6,
+}
+
+_NOON_PAT = re.compile(r"\b(noon|midday|12\s*(?:pm|p\.m\.|p|))\b", re.IGNORECASE)
+_MORNING_PAT = re.compile(r"\b(morning|am|a\.m\.)\b", re.IGNORECASE)
+_AFTERNOON_PAT = re.compile(r"\b(afternoon|pm|p\.m\.)\b", re.IGNORECASE)
+_EVENING_PAT = re.compile(r"\b(evening|sunset|dusk)\b", re.IGNORECASE)
+_NIGHT_PAT = re.compile(r"\b(night|tonight|overnight|late)\b", re.IGNORECASE)
+
+def _next_weekday_delta(target_wd: int, *, base: Optional[datetime] = None, force_next: bool = False) -> int:
+    """Days until the next target weekday (0=Mon..6=Sun).
+    If force_next is True and today==target, return 7.
+    """
+    base = base or datetime.now()
+    today = base.weekday()
+    delta = (target_wd - today) % 7
+    if delta == 0 and force_next:
+        delta = 7
+    return delta
+
 def _parse_when(when: Optional[str]) -> tuple[int, Optional[str], str]:
     """Return (day_index, part_of_day, label) from a human-ish 'when' string.
 
-    Supported examples: 'now', 'today', 'tomorrow', 'tomorrow morning',
-    'tonight', 'this evening', 'tomorrow night'. Defaults to current conditions.
+    Now supports:
+      - 'now', 'today', 'tomorrow', 'day after tomorrow'
+      - day-of-week: 'Tuesday', 'next Friday', 'Fri morning', etc.
+      - 'noon', 'around 12', '12 pm', plus morning/afternoon/evening/night
     """
     if not when:
         return 0, None, "now"
     w = when.lower().strip()
+
+    # Fast paths
     if w in ("now", "current", "right now"):
         return 0, None, "now"
+
+    # Baseline day_index and part
     day_index = 0
     part: Optional[str] = None
-    if "tomorrow" in w:
-        day_index = 1
-    elif "day after" in w or "in 2 days" in w:
+
+    # Relative words
+    if "day after" in w or "in 2 days" in w:
         day_index = 2
+    elif "tomorrow" in w:
+        day_index = 1
     elif "today" in w:
         day_index = 0
 
-    if any(p in w for p in ["morning", "am"]):
+    # Day-of-week handling, including "next <weekday>"
+    force_next = "next " in w  # crude but effective
+    # Find any weekday token
+    tokens = re.findall(r"(mon(?:day)?|tue(?:s|sday)?|wed(?:nesday)?|thu(?:r|rs|rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)", w, re.IGNORECASE)
+    if tokens:
+        # Use the first match; map to weekday index
+        wd_token = tokens[0].lower()
+        for k, idx in _WEEKDAY_ALIASES.items():
+            if wd_token.startswith(k):
+                day_index = _next_weekday_delta(idx, force_next=force_next)
+                break
+
+    # Part-of-day / time parsing
+    if _NOON_PAT.search(w) or "around 12" in w or "12pm" in w or "12 pm" in w or "12 p.m." in w:
+        part = "noon"
+    elif _MORNING_PAT.search(w):
         part = "morning"
-    elif any(p in w for p in ["afternoon", "pm"]):
-        part = "afternoon"
-    elif any(p in w for p in ["evening", "sunset"]):
+    elif _AFTERNOON_PAT.search(w):
+        # Prefer 'noon' if they used '12' without 'am'
+        if "12" in w:
+            part = "noon"
+        else:
+            part = "afternoon"
+    elif _EVENING_PAT.search(w):
         part = "evening"
-    elif any(p in w for p in ["night", "tonight"]):
+    elif _NIGHT_PAT.search(w):
         part = "night"
-    return day_index, part, w
+
+    # If they said "tonight", make sure day_index is today
+    if "tonight" in w:
+        day_index = 0
+        part = "night"
+
+    # Compose a friendly label we can echo back
+    label = w
+    return day_index, part, label
 
 
 # -----------------------------
@@ -240,7 +305,7 @@ async def fetch_weather(params: FunctionCallParams) -> None:
     Expects `params.arguments` to contain:
     - location: str (e.g., "San Francisco, CA")
     - format: "celsius" | "fahrenheit"
-    - when: Optional[str] like 'now', 'tomorrow morning'
+    - when: Optional[str] like 'now', 'tomorrow morning', 'tuesday noon'
     """
     args = params.arguments or {}
     location = str(args.get("location", "")).strip()
@@ -272,19 +337,50 @@ async def fetch_weather(params: FunctionCallParams) -> None:
         })
         return
 
+    # Best-effort "resolved_location" from wttr JSON (falls back to input)
+    resolved_location = None
+    try:
+        nearest = (data.get("nearest_area") or [])
+        if nearest and isinstance(nearest, list):
+            area = nearest[0]
+            name_val = ((area.get("areaName") or [{}])[0].get("value") or "").strip()
+            region_val = ((area.get("region") or [{}])[0].get("value") or "").strip()
+            country_val = ((area.get("country") or [{}])[0].get("value") or "").strip()
+            resolved_location = ", ".join([p for p in [name_val, region_val, country_val] if p])
+    except Exception:
+        resolved_location = None
+
     try:
         day_index, part, label = _parse_when(when)
+        # If a specific time/weekday was asked, use period forecast; else current conditions
         if when and label != "now":
             snap = _extract_period_forecast(data, day_index=day_index, part_of_day=part, unit=unit)
             if snap is None:
-                # Fall back to current
+                # Fall back to current if out of range (wttr j1 usually gives 3 days)
                 snap = _extract_current_cc(data, unit)
                 snap["note"] = "forecast_unavailable_fallback_to_current"
-            result = {"location": location, "format": unit, "when": label, **snap}
+            result = {
+                "location": location,
+                "resolved_location": resolved_location or location,
+                "format": unit,
+                "when": label,
+                **snap,
+            }
         else:
             snap = _extract_current_cc(data, unit)
-            result = {"location": location, "format": unit, "when": "now", **snap}
+            result = {
+                "location": location,
+                "resolved_location": resolved_location or location,
+                "format": unit,
+                "when": "now",
+                **snap,
+            }
 
+        logger.info(
+            "WTTR resolved %r → %s",
+            location,
+            result.get("resolved_location", location),
+        )
         await params.result_callback(result)
     except Exception as e:
         logger.warning(f"Weather parse failed for {location}: {e}")
@@ -302,20 +398,20 @@ def create_weather_tools() -> ToolsSchema:
     """Create a ToolsSchema describing the `get_current_weather` tool."""
     weather_function = FunctionSchema(
         name="get_current_weather",
-        description="Get the current weather",
+        description="Get the current weather or a simple forecast snapshot",
         properties={
             "location": {
                 "type": "string",
-                "description": "The city and state, e.g. San Francisco, CA",
+                "description": "City and state or place name, e.g. 'San Francisco, CA' or 'Vallejo'",
             },
             "format": {
                 "type": "string",
                 "enum": ["celsius", "fahrenheit"],
-                "description": "The temperature unit to use. Infer this from the user's location.",
+                "description": "Temperature unit to use. Infer from the user's locale/preferences.",
             },
             "when": {
                 "type": "string",
-                "description": "Optional: when to check, e.g. 'now', 'tomorrow morning', 'tonight'.",
+                "description": "Optional: when to check, e.g. 'now', 'tomorrow morning', 'Tuesday noon', 'tonight'.",
             },
         },
         required=["location", "format"],
