@@ -119,7 +119,8 @@
         this.isConnected = false;
         this.isSpeaking = false;
         this.toolActive = false;
-        this.connectedLabel = 'Connected';
+        // this.connectedLabel = '✅ Connected to Voice Chat';
+        this.connectedLabel = '';
         this.isUserTalking = false;
         this._lastStatus = '';
         
@@ -401,14 +402,14 @@
               }
               break;
             case 'tts_interrupt':
-              this.updateStatus('User');
+              this.updateStatus('👤 User...');
               break;
             case 'log_tool': {
               const phase = (msg.phase || '');
               if (phase === 'llm_only') break; // ignore LLM-only
               const name = (msg.name || '');
-              const label = (name === 'google_search') ? 'Google Search'
-                          : (name === 'get_current_weather') ? 'Weather Search'
+              const label = (name === 'google_search') ? '🔍 Google Search...'
+                          : (name === 'get_current_weather') ? '☀️ Weather Search...'
                           : 'Tool';
               this.toolActive = true;
               this.updateStatus(label);
