@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import httpx
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Dict, Literal, Optional, Tuple
 
 from loguru import logger
 
@@ -11,7 +11,29 @@ from pipecat.frames.frames import TTSSpeakFrame
 from pipecat.services.llm_service import FunctionCallParams
 
 
-def _make_wind_fields(*, kph: Optional[float], mph: Optional[float], unit: Literal["celsius", "fahrenheit"]) -> dict:
+# -----------------------------
+# Utilities
+# -----------------------------
+
+def _as_float(x: Any) -> Optional[float]:
+    try:
+        return float(x) if x is not None else None
+    except (TypeError, ValueError):
+        return None
+
+def _as_int(x: Any) -> Optional[int]:
+    try:
+        return int(x) if x is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _make_wind_fields(
+    *,
+    kph: Optional[float],
+    mph: Optional[float],
+    unit: Literal["celsius", "fahrenheit"],
+) -> dict:
     out: dict = {}
     try:
         if unit == "celsius":
@@ -31,21 +53,27 @@ def _make_wind_fields(*, kph: Optional[float], mph: Optional[float], unit: Liter
                 out["wind_speed_unit"] = "miles per hour"
                 out["wind_unit_code"] = "mph"
     except Exception:
+        # Keep wind fields optional on bad/missing data
         pass
     return out
 
-def _as_float(x: Any) -> Optional[float]:
-    try:
-        return float(x) if x is not None else None
-    except (TypeError, ValueError):
-        return None
 
-def _as_int(x: Any) -> Optional[int]:
-    try:
-        # int("45") and int(45.2) both OK; None guarded above
-        return int(x) if x is not None else None
-    except (TypeError, ValueError):
-        return None
+def _day_hi_lo(day: Dict[str, Any], unit: Literal["celsius", "fahrenheit"]) -> Tuple[Optional[int], Optional[int]]:
+    """Return (high, low) int temps for the given daily block."""
+    if unit == "celsius":
+        hi = _as_float(day.get("maxtempC"))
+        lo = _as_float(day.get("mintempC"))
+    else:
+        hi = _as_float(day.get("maxtempF"))
+        lo = _as_float(day.get("mintempF"))
+    hi_i = int(round(hi)) if hi is not None else None
+    lo_i = int(round(lo)) if lo is not None else None
+    return hi_i, lo_i
+
+
+# -----------------------------
+# Current conditions + period forecast
+# -----------------------------
 
 def _extract_current_cc(data: Dict[str, Any], unit: Literal["celsius", "fahrenheit"]) -> Dict[str, Any]:
     # current_condition is usually a list with one dict
@@ -60,16 +88,12 @@ def _extract_current_cc(data: Dict[str, Any], unit: Literal["celsius", "fahrenhe
         desc_raw = ""
     desc = (str(desc_raw).strip() or "Unknown")
 
-    # Temperature (prefers temp_* then falls back to FeelsLike*)
+    # Temperature (prefer temp_* then fall back to FeelsLike*)
     if unit == "celsius":
-        raw_temp = cc.get("temp_C")
-        if raw_temp is None:
-            raw_temp = cc.get("FeelsLikeC")
+        raw_temp = cc.get("temp_C") or cc.get("FeelsLikeC")
         unit_label = "Celsius"
     else:
-        raw_temp = cc.get("temp_F")
-        if raw_temp is None:
-            raw_temp = cc.get("FeelsLikeF")
+        raw_temp = cc.get("temp_F") or cc.get("FeelsLikeF")
         unit_label = "Fahrenheit"
 
     ftemp = _as_float(raw_temp)
@@ -81,17 +105,27 @@ def _extract_current_cc(data: Dict[str, Any], unit: Literal["celsius", "fahrenhe
         "temperature_unit": unit_label,
     }
 
-    # Humidity
+    # Humidity (optional)
     hum = _as_int(cc.get("humidity"))
     if hum is not None:
         out["humidity"] = hum
 
-    # Wind inputs (both optional; your _make_wind_fields can decide how to present)
+    # Wind (optional)
     kph = _as_float(cc.get("windspeedKmph"))
     mph = _as_float(cc.get("windspeedMiles"))
     out.update(_make_wind_fields(kph=kph, mph=mph, unit=unit))
 
+    # Daily high/low from today's daily block, if available
+    weather_days = data.get("weather") or []
+    if isinstance(weather_days, list) and weather_days:
+        hi, lo = _day_hi_lo(weather_days[0], unit)
+        if hi is not None:
+            out["high_temperature"] = hi
+        if lo is not None:
+            out["low_temperature"] = lo
+
     return out
+
 
 def _extract_period_forecast(
     data: dict, *, day_index: int, part_of_day: Optional[str], unit: Literal["celsius", "fahrenheit"]
@@ -124,39 +158,46 @@ def _extract_period_forecast(
     if pick is None:
         return None
 
+    # Conditions
     descs = pick.get("weatherDesc") or []
-    desc = (descs[0].get("value") if descs else "").strip() or "Unknown"
-    temp_key = "tempC" if unit == "celsius" else "tempF"
-    try:
-        temp = float(pick.get(temp_key))
-    except Exception:
-        temp = None
+    desc_raw = (descs[0].get("value") if descs and isinstance(descs[0], dict) else "") or ""
+    desc = (str(desc_raw).strip() or "Unknown")
 
-    out = {
+    # Temperature snapshot at that time
+    temp_key = "tempC" if unit == "celsius" else "tempF"
+    temp_float = _as_float(pick.get(temp_key))
+    temp_int = int(round(temp_float)) if temp_float is not None else None
+
+    out: Dict[str, Any] = {
         "conditions": desc,
         "temperature_unit": "Celsius" if unit == "celsius" else "Fahrenheit",
     }
-    if temp is not None:
-        out["temperature"] = int(round(temp))
-    # Wind speed in words, selecting mph/kph based on unit
-    wind_kph_val = pick.get("windspeedKmph")
-    wind_miles_val = pick.get("windspeedMiles")
-    try:
-        kph = float(wind_kph_val) if wind_kph_val is not None else None
-    except Exception:
-        kph = None
-    try:
-        mph = float(wind_miles_val) if wind_miles_val is not None else None
-    except Exception:
-        mph = None
+    if temp_int is not None:
+        out["temperature"] = temp_int
+
+    # Daily high/low for that day
+    hi, lo = _day_hi_lo(day, unit)
+    if hi is not None:
+        out["high_temperature"] = hi
+    if lo is not None:
+        out["low_temperature"] = lo
+
+    # Wind (optional)
+    kph = _as_float(pick.get("windspeedKmph"))
+    mph = _as_float(pick.get("windspeedMiles"))
     out.update(_make_wind_fields(kph=kph, mph=mph, unit=unit))
-    if pick.get("chanceofrain") is not None:
-        try:
-            out["chance_of_rain_pct"] = int(pick.get("chanceofrain"))
-        except Exception:
-            pass
+
+    # Chance of rain (optional)
+    rain = _as_int(pick.get("chanceofrain"))
+    if rain is not None:
+        out["chance_of_rain_pct"] = rain
+
     return out
 
+
+# -----------------------------
+# When parsing
+# -----------------------------
 
 def _parse_when(when: Optional[str]) -> tuple[int, Optional[str], str]:
     """Return (day_index, part_of_day, label) from a human-ish 'when' string.
@@ -189,12 +230,17 @@ def _parse_when(when: Optional[str]) -> tuple[int, Optional[str], str]:
     return day_index, part, w
 
 
+# -----------------------------
+# Tool handler
+# -----------------------------
+
 async def fetch_weather(params: FunctionCallParams) -> None:
     """Fetch current weather using wttr.in and return it to the LLM.
 
     Expects `params.arguments` to contain:
     - location: str (e.g., "San Francisco, CA")
     - format: "celsius" | "fahrenheit"
+    - when: Optional[str] like 'now', 'tomorrow morning'
     """
     args = params.arguments or {}
     location = str(args.get("location", "")).strip()
@@ -211,9 +257,7 @@ async def fetch_weather(params: FunctionCallParams) -> None:
         pass
 
     url = f"https://wttr.in/{location}?format=j1"
-    logger.info(
-        f"tools.weather: location='{location}' format='{unit}' when='{when or 'now'}'"
-    )
+    logger.info("tools.weather: location='%s' format='%s' when='%s'", location, unit, when or "now")
     try:
         async with httpx.AsyncClient(timeout=8.0) as client:
             resp = await client.get(url)
@@ -249,6 +293,10 @@ async def fetch_weather(params: FunctionCallParams) -> None:
             "location": location,
         })
 
+
+# -----------------------------
+# Tool registration
+# -----------------------------
 
 def create_weather_tools() -> ToolsSchema:
     """Create a ToolsSchema describing the `get_current_weather` tool."""
