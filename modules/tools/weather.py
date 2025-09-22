@@ -69,7 +69,6 @@ def _make_wind_fields(
     return out
 
 def _weekday_name_to_index(name: str) -> Optional[int]:
-    """Return 0..6 (Mon..Sun) for weekday name, else None."""
     name = name.strip().lower()
     days = ["monday","tuesday","wednesday","thursday","friday","saturday","sunday"]
     for i, d in enumerate(days):
@@ -78,18 +77,12 @@ def _weekday_name_to_index(name: str) -> Optional[int]:
     return None
 
 def _parse_when(when: Optional[str]) -> tuple[int, Optional[str], str]:
-    """
-    Return (day_index, part_of_day, label).
-    Supports 'now', 'today', 'tomorrow', 'day after', 'next hour',
-    parts of day (morning/afternoon/evening/night), and weekday names.
-    """
     if not when:
         return 0, None, "now"
     w = when.lower().strip()
     if w in ("now", "current", "right now"):
         return 0, None, "now"
 
-    # Day index via common phrases
     day_index = 0
     if "tomorrow" in w:
         day_index = 1
@@ -98,12 +91,10 @@ def _parse_when(when: Optional[str]) -> tuple[int, Optional[str], str]:
     elif "today" in w:
         day_index = 0
     else:
-        # Weekday handling (relative to today)
         tgt = _weekday_name_to_index(w)
         if tgt is not None:
-            today = datetime.now().weekday()  # 0=Mon
-            delta = (tgt - today) % 7
-            day_index = delta
+            today = datetime.now().weekday()
+            day_index = (tgt - today) % 7
 
     part: Optional[str] = None
     if "next hour" in w or ("hour" in w and "next" in w):
@@ -178,7 +169,6 @@ def _extract_from_google_current(
     data: Dict[str, Any],
     unit: Literal["celsius", "fahrenheit"],
 ) -> Dict[str, Any]:
-    # Temperatures (C) - try common shapes
     temp_c = _as_float(((data.get("temperature") or {}).get("degrees") or (data.get("temperature") or {}).get("value")))
     feels_c = _as_float(((data.get("feelsLikeTemperature") or {}).get("degrees") or (data.get("feelsLikeTemperature") or {}).get("value")))
     if feels_c is None:
@@ -211,6 +201,17 @@ def _extract_from_google_current(
     if tz:
         out["time_zone"] = tz
 
+    # Try today's high/low from currentConditionsHistory
+    hist = data.get("currentConditionsHistory") or {}
+    hi_c = _as_float(((hist.get("maxTemperature") or {}).get("degrees") or (hist.get("maxTemperature") or {}).get("value")))
+    lo_c = _as_float(((hist.get("minTemperature") or {}).get("degrees") or (hist.get("minTemperature") or {}).get("value")))
+    hi_i = _c_to_unit(hi_c, unit)
+    lo_i = _c_to_unit(lo_c, unit)
+    if hi_i is not None:
+        out["high_temperature"] = hi_i
+    if lo_i is not None:
+        out["low_temperature"] = lo_i
+
     logger.debug("PARSED current → %r", out)
     return out
 
@@ -220,18 +221,11 @@ def _extract_from_google_daily(
     day_index: int,
     unit: Literal["celsius", "fahrenheit"],
 ) -> Optional[Dict[str, Any]]:
-    # The days array name varies; try multiple
-    days = (
-        data.get("days")
-        or data.get("dailyForecasts")
-        or data.get("forecasts")
-        or []
-    )
+    days = (data.get("days") or data.get("dailyForecasts") or data.get("forecasts") or [])
     if not isinstance(days, list) or not days or day_index >= len(days):
         return None
 
     d = days[day_index]
-    # Temperature fields (C)
     hi_c = _as_float(((d.get("temperatureMax") or {}).get("degrees") or (d.get("temperatureMax") or {}).get("value") or d.get("maxTemperature")))
     lo_c = _as_float(((d.get("temperatureMin") or {}).get("degrees") or (d.get("temperatureMin") or {}).get("value") or d.get("minTemperature")))
 
@@ -254,7 +248,6 @@ def _extract_from_google_daily(
     if lo is not None:
         out["low_temperature"] = lo
 
-    # Optional precip chance (percent) — try a few shapes
     precip_pct = (
         _as_int(((d.get("precipitation") or {}).get("chance")))
         or _as_int(d.get("precipitationChance"))
@@ -272,7 +265,6 @@ def _extract_from_google_hourly(
     unit: Literal["celsius", "fahrenheit"],
     pick: Literal["hour", "morning", "afternoon", "evening", "night", None],
 ) -> Optional[Dict[str, Any]]:
-    # The hours array name varies; try multiple
     hours = data.get("hours") or data.get("hourlyForecasts") or []
     if not isinstance(hours, list) or not hours:
         return None
@@ -315,7 +307,6 @@ def _extract_from_google_hourly(
     kph = _as_float(((wind.get("speed") or {}).get("value") or wind.get("speedKph")))
     mph = None
 
-    # Optional precip chance (percent)
     precip_pct = (
         _as_int(((chosen.get("precipitation") or {}).get("chance")))
         or _as_int(chosen.get("precipitationChance"))
@@ -335,16 +326,58 @@ def _extract_from_google_hourly(
     return out
 
 # -----------------------------------------------------------------------------
+# Spoken summary (NEW)
+# -----------------------------------------------------------------------------
+
+def _format_spoken_weather(result: Dict[str, Any]) -> str:
+    loc = result.get("resolved_location") or result.get("location") or ""
+    when = result.get("when") or "now"
+    unit_word = "degrees Fahrenheit" if result.get("format") == "fahrenheit" else "degrees Celsius"
+
+    bits = []
+    if when == "now":
+        bits.append(f"Right now in {loc}," if loc else "Right now,")
+    else:
+        bits.append(f"{when.capitalize()} in {loc}," if loc else f"{when.capitalize()},")
+
+    # Current/selected temperature and conditions
+    if result.get("temperature") is not None:
+        bits.append(f"it's {result['temperature']} {unit_word}")
+    if result.get("conditions"):
+        if bits and bits[-1].endswith(unit_word):
+            bits[-1] += f" with {result['conditions'].lower()}"
+        else:
+            bits.append(result["conditions"])
+
+    # High / Low
+    hi = result.get("high_temperature")
+    lo = result.get("low_temperature")
+    if hi is not None and lo is not None:
+        bits.append(f"with a high of {hi} and a low of {lo} {unit_word}.")
+    elif hi is not None:
+        bits.append(f"with a high of {hi} {unit_word}.")
+    elif lo is not None:
+        bits.append(f"with a low of {lo} {unit_word}.")
+
+    # Wind (optional)
+    if result.get("wind_speed") is not None and result.get("wind_speed_unit"):
+        bits.append(f"Winds around {result['wind_speed']} {result['wind_speed_unit']}.")
+
+    # Rain chance (optional)
+    if result.get("chance_of_rain_pct") is not None:
+        bits.append(f"Chance of precipitation {result['chance_of_rain_pct']} percent.")
+
+    # Ensure ending punctuation
+    spoken = " ".join(bits).strip()
+    if not spoken.endswith((".", "!", "?")):
+        spoken += "."
+    return spoken
+
+# -----------------------------------------------------------------------------
 # Tool handler
 # -----------------------------------------------------------------------------
 
 async def fetch_weather(params: FunctionCallParams) -> None:
-    """
-    Expects:
-      - location: str  e.g., "San Francisco, CA"
-      - format: "celsius" | "fahrenheit"
-      - when: Optional[str] like 'now', 'next hour', 'today afternoon', 'tomorrow morning', 'Tuesday'
-    """
     args = params.arguments or {}
     location = str(args.get("location", "")).strip()
     unit: Literal["celsius", "fahrenheit"] = args.get("format", "fahrenheit")  # type: ignore
@@ -378,7 +411,7 @@ async def fetch_weather(params: FunctionCallParams) -> None:
             })
             return
 
-        # Always get current (fast + helps with context/fallbacks)
+        # Current snapshot (also may include today's max/min)
         current_payload = await _google_weather_call(GOOGLE_WEATHER_URL_CURRENT, lat=lat, lng=lng)
         current = _extract_from_google_current(current_payload, unit=unit)
 
@@ -414,7 +447,6 @@ async def fetch_weather(params: FunctionCallParams) -> None:
                 daily_payload = await _google_weather_call(GOOGLE_WEATHER_URL_DAILY, lat=lat, lng=lng)
                 daily = _extract_from_google_daily(daily_payload, day_index=day_index, unit=unit)
                 if daily:
-                    # If we already added hourly, keep its conditions/temp, but add daily hi/lo
                     for k, v in daily.items():
                         if k in ("conditions", "temperature") and hourly_added:
                             continue
@@ -425,15 +457,20 @@ async def fetch_weather(params: FunctionCallParams) -> None:
                 logger.warning("Daily forecast unavailable (%s); skipping daily data", e.response.status_code)
                 result["note_daily"] = "daily_unavailable"
 
-            # If nothing forecastful made it in, fall back to current
             if "temperature" not in result and "high_temperature" not in result and "low_temperature" not in result:
                 result.update(current)
                 result["note"] = "forecast_unavailable_fallback_to_current"
 
+            # SPEAK the forecast including highs/lows if present
+            try:
+                await params.llm.push_frame(TTSSpeakFrame(_format_spoken_weather(result)))
+            except Exception as e:
+                logger.debug("TTSSpeakFrame summary failed (non-fatal): %s", e)
+
             await params.result_callback(result)
             return
 
-        # “now”
+        # “now” — include hi/lo from current; if missing, fill from daily[0]
         result = {
             "location": location,
             "resolved_location": resolved or location,
@@ -441,6 +478,25 @@ async def fetch_weather(params: FunctionCallParams) -> None:
             "when": "now",
             **current,
         }
+        if "high_temperature" not in result or "low_temperature" not in result:
+            try:
+                daily_payload = await _google_weather_call(GOOGLE_WEATHER_URL_DAILY, lat=lat, lng=lng)
+                daily_today = _extract_from_google_daily(daily_payload, day_index=0, unit=unit)
+                if daily_today:
+                    if "high_temperature" not in result and "high_temperature" in daily_today:
+                        result["high_temperature"] = daily_today["high_temperature"]
+                    if "low_temperature" not in result and "low_temperature" in daily_today:
+                        result["low_temperature"] = daily_today["low_temperature"]
+            except httpx.HTTPStatusError as e:
+                logger.warning("Daily forecast unavailable for 'now' (%s); skipping highs/lows fallback", e.response.status_code)
+                result["note_daily"] = "daily_unavailable_for_now"
+
+        # SPEAK the current conditions including highs/lows
+        try:
+            await params.llm.push_frame(TTSSpeakFrame(_format_spoken_weather(result)))
+        except Exception as e:
+            logger.debug("TTSSpeakFrame summary failed (non-fatal): %s", e)
+
         await params.result_callback(result)
 
     except httpx.HTTPStatusError as e:
