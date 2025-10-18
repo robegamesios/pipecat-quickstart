@@ -19,7 +19,7 @@ import os
 from contextlib import asynccontextmanager
 from typing import Dict
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -221,6 +221,31 @@ def create_app(ada2_client_path: str) -> FastAPI:
                 "  window.RTCPeerConnection.prototype = OrigPC.prototype;\n"
                 "  // Nudge AudioContext on user gesture (connect button)\n"
                 "  document.addEventListener('click', (ev)=>{ const t = ev.target; if(t && t.id==='connect-btn'){ setTimeout(()=>{ try{ const head = window.__TH_AVATAR__; if(head && head.audioCtx && head.audioCtx.state!=='running'){ head.audioCtx.resume(); } }catch(e){} ensureLipsync(); }, 50); } });\n"
+                "  // --- Minimal EPUB upload UI ---\n"
+                "  function addUploadUI(){\n"
+                "    try{\n"
+                "      if(document.getElementById('upload-epub-btn')) return;\n"
+                "      const btn = document.createElement('button');\n"
+                "      btn.id='upload-epub-btn';\n"
+                "      btn.textContent='📚 Upload EPUB';\n"
+                "      btn.style.cssText='position:fixed;left:20px;bottom:24px;z-index:1000;background:#444;color:#fff;border:none;padding:10px 14px;border-radius:8px;cursor:pointer;font-size:14px;box-shadow:0 2px 10px rgba(0,0,0,.3)';\n"
+                "      const inp = document.createElement('input');\n"
+                "      inp.type='file'; inp.accept='.epub,application/epub+zip'; inp.style.display='none';\n"
+                "      btn.addEventListener('click', ()=> inp.click());\n"
+                "      inp.addEventListener('change', async ()=>{\n"
+                "        if(!inp.files || !inp.files[0]) return;\n"
+                "        btn.disabled=true; const prev=btn.textContent; btn.textContent='Uploading…';\n"
+                "        try{ const fd=new FormData(); fd.append('file', inp.files[0]);\n"
+                "          const res = await fetch('/api/documents/upload',{ method:'POST', body:fd });\n"
+                "          const text = await res.text(); let data={}; try{ data=JSON.parse(text); }catch(e){}\n"
+                "          console.log('[Upload] response', text);\n"
+                "          if(data && data.success){ btn.textContent='Uploaded ✔'; setTimeout(()=> btn.textContent=prev, 1200);} else { const msg=(data&&data.message)||'Upload failed'; btn.textContent='Upload failed'; btn.title=msg; alert('Upload failed: '+msg); setTimeout(()=> btn.textContent=prev, 1500);}\n"
+                "        }catch(e){ btn.textContent='Error'; setTimeout(()=> btn.textContent=prev, 1500);} finally { btn.disabled=false; inp.value=''; }\n"
+                "      });\n"
+                "      document.body.appendChild(btn); document.body.appendChild(inp);\n"
+                "    }catch(e){}\n"
+                "  }\n"
+                "  if(document.readyState==='complete' || document.readyState==='interactive'){ addUploadUI(); } else { document.addEventListener('DOMContentLoaded', addUploadUI); }\n"
                 "})();\n"
                 "</script>\n"
             )
@@ -251,6 +276,86 @@ def create_app(ada2_client_path: str) -> FastAPI:
     @app.get("/ada2", include_in_schema=False)
     async def legacy_redirect():
         return RedirectResponse(url="/ada2-ui/")
+
+    # ---------------------------
+    # Document/book API endpoints (ADA2-compatible) — lazy imports
+    # ---------------------------
+    @app.post("/api/documents/upload")
+    async def api_upload_document_file(file: UploadFile = File(...)):
+        try:
+            from modules.books.handlers import upload_document_file as _upload_document_file
+
+            logger.info("/api/documents/upload: received file name=%r content_type=%r", file.filename, file.content_type)
+            content = await file.read()
+            filename = file.filename or "uploaded.epub"
+            success, message, doc_info = await _upload_document_file(content, filename)
+            logger.info("/api/documents/upload: success=%s title=%r", bool(success), (doc_info or {}).get("title") if doc_info else None)
+            return {"success": bool(success), "message": message, "document": doc_info}
+        except Exception as e:
+            # Return JSON error for frontend compatibility instead of HTTP 500
+            logger.error("/api/documents/upload: error=%s", e)
+            return {"success": False, "message": str(e)}
+
+    @app.post("/api/documents/upload-path")
+    async def api_upload_document_path(request: dict):
+        try:
+            from modules.books.handlers import upload_document as _upload_document_path
+
+            file_path = str(request.get("file_path", ""))
+            logger.info("/api/documents/upload-path: file_path=%r", file_path)
+            success, message, doc_info = await _upload_document_path(file_path)
+            logger.info("/api/documents/upload-path: success=%s title=%r", bool(success), (doc_info or {}).get("title") if doc_info else None)
+            return {"success": bool(success), "message": message, "document": doc_info}
+        except Exception as e:
+            logger.error("/api/documents/upload-path: error=%s", e)
+            return {"success": False, "message": str(e)}
+
+    @app.get("/api/documents/list")
+    async def api_list_documents():
+        try:
+            from modules.books.handlers import get_document_list as _get_document_list
+
+            success, message, documents = await _get_document_list()
+            logger.info("/api/documents/list: count=%d", len(documents or {}))
+            return {
+                "success": bool(success),
+                "message": message,
+                "documents": documents or {},
+            }
+        except Exception as e:
+            logger.error("/api/documents/list: error=%s", e)
+            return {"success": False, "message": str(e), "documents": {}}
+
+    @app.post("/api/documents/delete")
+    async def api_delete_document(request: dict):
+        try:
+            from modules.books.chroma_store import get_store as _get_store
+
+            document_id = str(request.get("document_id", ""))
+            store = _get_store()
+            ok = await store.delete_document(document_id)
+            logger.info("/api/documents/delete: id=%r success=%s", document_id, bool(ok))
+            return {
+                "success": bool(ok),
+                "message": f"Document {document_id} deleted" if ok else "Delete failed",
+            }
+        except Exception as e:
+            logger.error("/api/documents/delete: error=%s", e)
+            return {"success": False, "message": str(e)}
+
+    @app.post("/api/documents/query")
+    async def api_document_query(request: dict):
+        try:
+            from modules.books.query_parser import parse_document_query as _parse_doc_query
+
+            q = str(request.get("query", ""))
+            logger.info("/api/documents/query: q=%r", q)
+            res = await _parse_doc_query(q)
+            logger.info("/api/documents/query: ok=%s type=%r", bool(res.get("success")), res.get("type"))
+            return res
+        except Exception as e:
+            logger.error("/api/documents/query: error=%s", e)
+            return {"success": False, "message": str(e)}
 
     # Manage active peer connections by pc_id
     pcs_map: Dict[str, SmallWebRTCConnection] = {}

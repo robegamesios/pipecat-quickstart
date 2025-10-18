@@ -44,6 +44,7 @@ from modules.tools import (
     create_all_tools,
     register_weather_tool,
     register_google_search_tool,
+    register_book_tools,
 )
 from modules.tool_logger import ToolUsageLogger
 from modules.sentence_tts import SentenceTTSPipeline
@@ -58,6 +59,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     # Register tool-call handlers (weather + google search)
     register_weather_tool(llm)
     register_google_search_tool(llm)
+    register_book_tools(llm)
 
     # Prompt for gpt-4o, gpt-4o-mini
     messages: List[ChatCompletionMessageParam] = [
@@ -77,7 +79,11 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
                 "When summarizing search results, write around five sentences per item, using clear, complete sentences. "
                 "Do not number or bullet the items; separate items with a blank line. "
                 "When you present results, say 'degrees Fahrenheit' or 'degrees Celsius' explicitly and spell wind units out: "
-                "use 'miles per hour' when using Fahrenheit and 'kilometers per hour' when using Celsius."
+                "use 'miles per hour' when using Fahrenheit and 'kilometers per hour' when using Celsius. "
+                "For books: prefer tools to handle all commands. For example: 'list books' → book_list; '"
+                "'focus on book 1' → book_focus; 'list chapters' → book_list_chapters; 'read chapter 3' → book_read_chapter; '"
+                "'next section' → book_next_chapter; 'previous section' → book_previous_chapter. If uncertain, call book_command_router with the raw text. "
+                "When reading a section, return only the raw section text so the system may speak it. Do not paraphrase the content."
             ),
         },
     ]
