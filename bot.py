@@ -48,8 +48,12 @@ from modules.tools import (
 )
 from modules.tool_logger import ToolUsageLogger
 from modules.sentence_tts import SentenceTTSPipeline
+from modules.tts_bridge import register_speaker, unregister_speaker
 
 load_dotenv(override=True)
+
+# Global mode; 'chat' or 'reader'
+BOT_MODE = os.getenv("PIPELINE_MODE", "chat").strip().lower()
 
 
 async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
@@ -125,12 +129,37 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
 
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
-        # Kick off the conversation.
-        messages.append({"role": "system", "content": "Say Hello, I'm ADA. How can I assist you today?"})
-        await task.queue_frames([LLMRunFrame()])
+        # Register a speaker function for external chapter reading
+        # Register a speaker function for external chapter reading
+        try:
+            pc_id = (
+                getattr(getattr(transport, "connection", None), "pc_id", None)
+                or getattr(getattr(runner_args, "webrtc_connection", None), "pc_id", None)
+                or "default"
+            )
+            async def _speak(text: str):
+                from pipecat.frames.frames import TTSSpeakFrame  # local import to avoid top-level deps
+                await task.queue_frames([TTSSpeakFrame(text)])
+
+            register_speaker(str(pc_id), _speak)
+        except Exception:
+            pass
+        # Kick off the conversation only in chat mode
+        if BOT_MODE != "reader":
+            messages.append({"role": "system", "content": "Say Hello, I'm ADA. How can I assist you today?"})
+            await task.queue_frames([LLMRunFrame()])
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
+        try:
+            pc_id = (
+                getattr(getattr(transport, "connection", None), "pc_id", None)
+                or getattr(getattr(runner_args, "webrtc_connection", None), "pc_id", None)
+                or "default"
+            )
+            unregister_speaker(str(pc_id))
+        except Exception:
+            pass
         await task.cancel()
 
     runner = PipelineRunner(handle_sigint=runner_args.handle_sigint)

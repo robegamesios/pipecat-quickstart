@@ -58,6 +58,17 @@ def create_app(ada2_client_path: str) -> FastAPI:
         app.mount("/ada2-static", StaticFiles(directory=ada2_client_path, html=False), name="ada2_static")
         logger.info(f"Mounted ADA2 static assets at /ada2-static from {ada2_client_path}")
 
+        # Optionally mount an external ADA2 frontend/public tree for exact UI files
+        ada2_ui_public_path = os.getenv("ADA2_UI_PUBLIC_PATH", "").strip()
+        js_base = "/ada2-static"
+        if ada2_ui_public_path and os.path.isdir(ada2_ui_public_path):
+            try:
+                app.mount("/ada2-ext", StaticFiles(directory=ada2_ui_public_path, html=False), name="ada2_ext")
+                js_base = "/ada2-ext"
+                logger.info(f"Mounted external ADA2 UI at /ada2-ext from {ada2_ui_public_path}")
+            except Exception as e:
+                logger.warning(f"Could not mount ADA2_UI_PUBLIC_PATH={ada2_ui_public_path}: {e}")
+
         @app.get("/ada2-injected/lipsync-en.mjs", include_in_schema=False)
         async def lipsync_en_mjs():
             # Serve the module from the project tree by default; allow env override
@@ -82,6 +93,36 @@ def create_app(ada2_client_path: str) -> FastAPI:
             # Ensure relative paths resolve against /ada2-static/
             if "<base" not in html:
                 html = html.replace("<head>", "<head>\n<base href=\"/ada2-static/\">\n")
+
+            # Inject import map for Kokoro dependencies and ADA2 module path if not present
+            if "@huggingface/transformers" not in html:
+                import_map = (
+                    "<script type=\"importmap\">\n"
+                    "{\n"
+                    "  \"imports\": {\n"
+                    "    \"@huggingface/transformers\": \"https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.4.2/dist/transformers.min.js\",\n"
+                    "    \"phonemizer\": \"https://cdn.jsdelivr.net/npm/phonemizer@1.2.1/dist/phonemizer.min.js\",\n"
+                    "    \"/public/js/ui-utils.js\": \"/ada2-static/js/ui-utils.js\"\n"
+                    "  }\n"
+                    "}\n"
+                    "</script>\n"
+                )
+                html = html.replace("<head>", f"<head>\n{import_map}")
+
+            # Inject ADA2 UI assets (prefer external mount if available)
+            head_includes = (
+                f'<link rel="stylesheet" href="{js_base}/css/text-highlighting.css">\n'
+                f'<script src="{js_base}/js/widget-styles.js"></script>\n'
+                f'<script type="module" src="{js_base}/js/ui-utils.js"></script>\n'
+                f'<script src="{js_base}/js/text-highlighter.js"></script>\n'
+                f'<script type="module" src="{js_base}/js/document-utils.js"></script>\n'
+                f'<script src="{js_base}/js/document-widget.js"></script>\n'
+                f'<script src="{js_base}/js/widget-manager.js"></script>\n'
+                f'<script src="/ada2-static/js/reader-webrtc.js"></script>\n'
+                '<script type="module" src="/ada2-static/js/kokoro-bootstrap.mjs"></script>\n'
+            )
+            if "/ada2-static/js/document-widget.js" not in html:
+                html = html.replace("</head>", head_includes + "</head>")
 
             # Try to expose the TalkingHead instance on the ADA2 client
             if "await this.avatar.showAvatar(" in html and "window.__TH_AVATAR__" not in html:
@@ -221,31 +262,10 @@ def create_app(ada2_client_path: str) -> FastAPI:
                 "  window.RTCPeerConnection.prototype = OrigPC.prototype;\n"
                 "  // Nudge AudioContext on user gesture (connect button)\n"
                 "  document.addEventListener('click', (ev)=>{ const t = ev.target; if(t && t.id==='connect-btn'){ setTimeout(()=>{ try{ const head = window.__TH_AVATAR__; if(head && head.audioCtx && head.audioCtx.state!=='running'){ head.audioCtx.resume(); } }catch(e){} ensureLipsync(); }, 50); } });\n"
-                "  // --- Minimal EPUB upload UI ---\n"
-                "  function addUploadUI(){\n"
-                "    try{\n"
-                "      if(document.getElementById('upload-epub-btn')) return;\n"
-                "      const btn = document.createElement('button');\n"
-                "      btn.id='upload-epub-btn';\n"
-                "      btn.textContent='📚 Upload EPUB';\n"
-                "      btn.style.cssText='position:fixed;left:20px;bottom:24px;z-index:1000;background:#444;color:#fff;border:none;padding:10px 14px;border-radius:8px;cursor:pointer;font-size:14px;box-shadow:0 2px 10px rgba(0,0,0,.3)';\n"
-                "      const inp = document.createElement('input');\n"
-                "      inp.type='file'; inp.accept='.epub,application/epub+zip'; inp.style.display='none';\n"
-                "      btn.addEventListener('click', ()=> inp.click());\n"
-                "      inp.addEventListener('change', async ()=>{\n"
-                "        if(!inp.files || !inp.files[0]) return;\n"
-                "        btn.disabled=true; const prev=btn.textContent; btn.textContent='Uploading…';\n"
-                "        try{ const fd=new FormData(); fd.append('file', inp.files[0]);\n"
-                "          const res = await fetch('/api/documents/upload',{ method:'POST', body:fd });\n"
-                "          const text = await res.text(); let data={}; try{ data=JSON.parse(text); }catch(e){}\n"
-                "          console.log('[Upload] response', text);\n"
-                "          if(data && data.success){ btn.textContent='Uploaded ✔'; setTimeout(()=> btn.textContent=prev, 1200);} else { const msg=(data&&data.message)||'Upload failed'; btn.textContent='Upload failed'; btn.title=msg; alert('Upload failed: '+msg); setTimeout(()=> btn.textContent=prev, 1500);}\n"
-                "        }catch(e){ btn.textContent='Error'; setTimeout(()=> btn.textContent=prev, 1500);} finally { btn.disabled=false; inp.value=''; }\n"
-                "      });\n"
-                "      document.body.appendChild(btn); document.body.appendChild(inp);\n"
-                "    }catch(e){}\n"
-                "  }\n"
-                "  if(document.readyState==='complete' || document.readyState==='interactive'){ addUploadUI(); } else { document.addEventListener('DOMContentLoaded', addUploadUI); }\n"
+                "  // Upload button removed; widget provides its own upload UI.\n"
+                "  function addLibraryBtn(){ try{ if(document.getElementById('document-widget-btn')) return; var b=document.createElement('button'); b.id='document-widget-btn'; b.textContent='📖 Library'; b.style.cssText='position:fixed;left:20px;bottom:128px;z-index:1000;background:#444;color:#fff;border:none;padding:10px 14px;border-radius:8px;cursor:pointer;font-size:14px;box-shadow:0 2px 10px rgba(0,0,0,.3)'; b.onclick=async function(){ try{ if(window.readerRTC && window.readerRTC.connect){ await window.readerRTC.connect(); } if(window.documentWidget){ if(typeof window.documentWidget.returnToLibrary==='function'){ await window.documentWidget.returnToLibrary(); } window.documentWidget.show(); } }catch(e){} }; document.body.appendChild(b);}catch(e){} }\n"
+                "  function init(){ setTimeout(addLibraryBtn, 300); }\n"
+                "  if(document.readyState==='complete' || document.readyState==='interactive'){ init(); } else { document.addEventListener('DOMContentLoaded', init); }\n"
                 "})();\n"
                 "</script>\n"
             )
@@ -357,12 +377,35 @@ def create_app(ada2_client_path: str) -> FastAPI:
             logger.error("/api/documents/query: error=%s", e)
             return {"success": False, "message": str(e)}
 
+    @app.post("/api/tts/read")
+    async def api_tts_read(request: dict):
+        """Speak arbitrary text using the active pipeline's TTS, with avatar lipsync.
+
+        Body: { "text": "...", "pc_id": "optional" }
+        """
+        try:
+            from modules.tts_bridge import get_speaker
+
+            text = str(request.get("text", "")).strip()
+            pc_id = request.get("pc_id")
+            if not text:
+                return {"success": False, "message": "Missing text"}
+            speak = get_speaker(pc_id)
+            if not speak:
+                return {"success": False, "message": "No active voice session"}
+            await speak(text)
+            return {"success": True}
+        except Exception as e:
+            logger.error("/api/tts/read: error=%s", e)
+            return {"success": False, "message": str(e)}
+
     # Manage active peer connections by pc_id
     pcs_map: Dict[str, SmallWebRTCConnection] = {}
 
     @app.post("/api/offer")
     async def offer(request: dict, background_tasks: BackgroundTasks):
         pc_id = request.get("pc_id")
+        mode = str(request.get("mode") or "chat").lower().strip()
 
         if pc_id and pc_id in pcs_map:
             connection = pcs_map[pc_id]
@@ -381,6 +424,11 @@ def create_app(ada2_client_path: str) -> FastAPI:
             import bot as bot_module
 
             runner_args = SmallWebRTCRunnerArguments(webrtc_connection=connection)
+            # Set mode for bot (chat/reader)
+            try:
+                setattr(bot_module, "BOT_MODE", mode)
+            except Exception:
+                pass
             background_tasks.add_task(bot_module.bot, runner_args)
 
         answer = connection.get_answer()

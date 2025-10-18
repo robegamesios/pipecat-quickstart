@@ -15,6 +15,7 @@ from pipecat.frames.frames import (
     OutputAudioRawFrame,
     StartFrame,
     TTSAudioRawFrame,
+    TTSSpeakFrame,
     TransportMessageUrgentFrame,
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
@@ -65,6 +66,22 @@ class SentenceTTSPipeline(FrameProcessor):
             await self._tts.start(frame)
             await self._tts_pregen.start(frame)
             await self.push_frame(frame, direction)
+            return
+
+        # Allow external TTSSpeakFrame to route text directly into this pipeline
+        if isinstance(frame, TTSSpeakFrame):
+            raw = getattr(frame, "text", None) or getattr(frame, "content", "")
+            text = str(raw or "").strip()
+            if text:
+                # Chunk into phrases similar to streaming LLM path (split by . ! ? , ; : and ellipsis)
+                import re
+                parts = [p.strip() for p in re.split(r"(?<=[\.!\?\,;:\u2026])\s+", text) if p.strip()]
+                if not parts:
+                    parts = [text]
+                for p in parts:
+                    await self._queue.put(p)
+                if not self._drain_task or self._drain_task.done():
+                    self._drain_task = self.create_task(self._drain_queue(), name="speak-queue")
             return
 
         if isinstance(frame, EndFrame):

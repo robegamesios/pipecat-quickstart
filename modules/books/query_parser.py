@@ -70,14 +70,31 @@ async def _handle_show_section(q: str) -> Dict[str, Any]:
 
 
 async def _handle_list_sections() -> Dict[str, Any]:
-    msg = await list_sections()
-    # For the UI, provide structured sections if possible via handlers again
-    # Handlers.list_sections returns formatted text; for consistency, re-fetch
+    # Return a structured sections list for the currently focused document.
+    try:
+        from .chroma_store import get_store  # type: ignore
+    except Exception:
+        # Fallback to message if store is unavailable
+        msg = await list_sections()
+        return {"success": False, "message": msg}
+
+    store = get_store()
+    # Ensure there is a focused document; if not, focus the first available one
     ok, _, docs = await get_document_list()
     if not ok or not docs:
-        return {"success": False, "message": msg}
-    # Not knowing focused id here; the UI mainly needs an array. Defer to show_section flow.
-    return {"success": True, "type": API_RESPONSE_TYPES["message"], "message": msg}
+        return {"success": False, "message": "No documents uploaded yet."}
+
+    if not store.state.current_document_id:
+        first_id = list(docs.keys())[0]
+        store.focus_document(first_id)
+
+    sections = await store.get_chapters(store.state.current_document_id or "")
+    return {
+        "success": True,
+        "type": API_RESPONSE_TYPES["section_list"],
+        "sections": sections or [],
+        "message": f"Found {len(sections or [])} sections",
+    }
 
 
 async def _handle_list_documents() -> Dict[str, Any]:
@@ -122,4 +139,3 @@ async def _handle_previous_section() -> Dict[str, Any]:
         "content": text,
         "message": "Previous section",
     }
-

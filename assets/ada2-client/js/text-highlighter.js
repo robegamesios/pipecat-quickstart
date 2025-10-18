@@ -1,0 +1,402 @@
+/**
+ * Reusable Text Highlighter Module for ADA2
+ * Provides synchronized text highlighting during TTS playback
+ * Used by both document widget and chat widget
+ */
+
+class TextHighlighter {
+    constructor(options = {}) {
+        this.textSegments = [];
+        this.currentHighlightIndex = -1;
+        this.isInitialized = false;
+        this.fullText = '';
+        this.currentReadingPosition = 0;
+        this.subtitleObserver = null;
+        
+        // Configurable options
+        this.highlightDelay = options.highlightDelay || 1000;
+        this.enableBookmarks = options.enableBookmarks || false;
+        this.onBookmarkSet = options.onBookmarkSet || null;
+        this.onProgressUpdate = options.onProgressUpdate || null;
+        this.enableClickableSegments = options.enableClickableSegments || false;
+    }
+
+    /**
+     * Initialize text structure for highlighting
+     * @param {HTMLElement} textElement - The element containing the text
+     * @param {string} fullText - The full text content
+     */
+    initializeTextStructure(textElement, fullText) {
+        this.fullText = fullText;
+
+        if (this.isInitialized) {
+            this.clearAllHighlights();
+            return;
+        }
+
+        // Split text into segments for highlighting
+        const segments = this.splitTextIntoSegments(fullText);
+
+        // Build HTML structure with spans
+        const structuredHTML = segments.map((segment, index) => {
+            const escapedText = this.escapeHtml(segment.text);
+            const clickableClass = this.enableClickableSegments ? ' clickable-segment' : '';
+            return `<span class="text-segment${clickableClass}" data-segment-index="${index}" data-start-pos="${segment.startPos}" data-end-pos="${segment.endPos}">${escapedText}</span>`;
+        }).join('');
+
+        textElement.innerHTML = structuredHTML;
+
+        // Store references to all spans
+        this.textSegments = Array.from(textElement.querySelectorAll('.text-segment'));
+        this.isInitialized = true;
+        this.currentReadingPosition = 0;
+        this.currentHighlightIndex = -1;
+
+        // Add click event listeners for bookmark setting if enabled
+        if (this.enableClickableSegments) {
+            this.addClickListeners();
+        }
+    }
+
+    /**
+     * Split text into segments for highlighting
+     * @param {string} text - The text to split
+     * @returns {Array} Array of text segments with positions
+     */
+    splitTextIntoSegments(text) {
+        const segments = [];
+        let currentPos = 0;
+
+        // Split by words and punctuation
+        const parts = text.split(/(\s+|[.!?;:,]+)/);
+
+        for (const part of parts) {
+            if (part.length > 0) {
+                segments.push({
+                    text: part,
+                    startPos: currentPos,
+                    endPos: currentPos + part.length
+                });
+                currentPos += part.length;
+            }
+        }
+
+        return segments;
+    }
+
+    /**
+     * Highlight text based on subtitle word
+     * @param {string} searchText - The text to highlight
+     * @returns {boolean} True if highlighting was successful
+     */
+    highlightText(searchText) {
+        if (!searchText || !this.isInitialized) {
+            return false;
+        }
+
+        const cleanSearchText = searchText.replace(/[^\w\s]/g, '').toLowerCase().trim();
+
+        if (cleanSearchText.length < 2) {
+            return false;
+        }
+
+        // Find the next matching segment
+        const matchIndex = this.findNextMatch(cleanSearchText);
+
+        if (matchIndex === -1) {
+            return false;
+        }
+
+        // Clear previous highlights
+        this.clearAllHighlights();
+
+        // Apply highlighting
+        for (let i = 0; i < this.textSegments.length; i++) {
+            const span = this.textSegments[i];
+
+            if (i < matchIndex) {
+                // Mark as read
+                span.className = span.className.replace(/\b(current-reading-text|unread-text|current-position-text)\b/g, '').trim() + ' read-text';
+            } else if (i === matchIndex) {
+                // Current highlight
+                span.className = span.className.replace(/\b(read-text|unread-text|current-position-text)\b/g, '').trim() + ' current-reading-text';
+                this.currentHighlightIndex = i;
+
+                // Update reading position
+                const segmentEnd = parseInt(span.dataset.endPos);
+                this.currentReadingPosition = segmentEnd;
+            } else {
+                // Mark as unread
+                span.className = span.className.replace(/\b(read-text|current-reading-text|current-position-text)\b/g, '').trim() + ' unread-text';
+            }
+        }
+
+        // Scroll to highlighted text
+        this.scrollToHighlight();
+
+        // Notify progress update if callback provided
+        if (this.onProgressUpdate) {
+            this.onProgressUpdate(this.getProgress());
+        }
+
+        return true;
+    }
+
+    /**
+     * Find next matching segment
+     * @param {string} searchText - Text to search for
+     * @returns {number} Index of matching segment or -1
+     */
+    findNextMatch(searchText) {
+        const searchWords = searchText.split(/\s+/).filter(word => word.length > 1);
+
+        // Start searching from current position
+        const startIndex = Math.max(0, this.currentHighlightIndex - 1);
+
+        for (let i = startIndex; i < this.textSegments.length; i++) {
+            const span = this.textSegments[i];
+            const spanText = span.textContent.toLowerCase();
+
+            // Check if any search words match this span
+            for (const word of searchWords) {
+                if (spanText.includes(word) && word.length > 2) {
+                    const spanStart = parseInt(span.dataset.startPos);
+
+                    // Only accept matches at or after current reading position
+                    if (spanStart >= this.currentReadingPosition - 50) {
+                        return i;
+                    }
+                }
+            }
+        }
+
+        return -1;
+    }
+
+    /**
+     * Scroll to highlighted text
+     */
+    scrollToHighlight() {
+        if (this.currentHighlightIndex >= 0 && this.textSegments[this.currentHighlightIndex]) {
+            const highlightElement = this.textSegments[this.currentHighlightIndex];
+            highlightElement.scrollIntoView({
+                behavior: 'smooth',
+                block: 'center',
+                inline: 'nearest'
+            });
+        }
+    }
+
+    /**
+     * Clear all highlights
+     */
+    clearAllHighlights() {
+        for (const span of this.textSegments) {
+            span.className = span.className.replace(/\b(read-text|current-reading-text|current-position-text)\b/g, '').trim() + ' unread-text';
+        }
+        this.currentHighlightIndex = -1;
+    }
+
+    /**
+     * Add click event listeners to text segments for bookmark setting
+     */
+    addClickListeners() {
+        this.textSegments.forEach((segment, index) => {
+            segment.addEventListener('click', (event) => {
+                event.preventDefault();
+                this.setBookmarkAtSegment(index);
+            });
+        });
+    }
+
+    /**
+     * Set bookmark at a specific text segment
+     * @param {number} segmentIndex - Index of the clicked segment
+     */
+    setBookmarkAtSegment(segmentIndex) {
+        if (segmentIndex < 0 || segmentIndex >= this.textSegments.length) {
+            return;
+        }
+
+        const segment = this.textSegments[segmentIndex];
+        const position = parseInt(segment.dataset.startPos);
+
+        // Update reading position
+        this.currentReadingPosition = position;
+
+        // Notify bookmark set callback if provided
+        if (this.onBookmarkSet) {
+            this.onBookmarkSet(position, segmentIndex);
+        }
+
+        // Apply visual feedback
+        this.showBookmarkSetFeedback(segment);
+
+        // Update visual progress
+        this.applyReadingProgress();
+    }
+
+    /**
+     * Show visual feedback when bookmark is set
+     * @param {HTMLElement} segment - The clicked segment
+     */
+    showBookmarkSetFeedback(segment) {
+        // Add temporary feedback class
+        segment.classList.add('bookmark-set-feedback');
+
+        // Remove feedback after animation
+        setTimeout(() => {
+            segment.classList.remove('bookmark-set-feedback');
+        }, 1000);
+    }
+
+    /**
+     * Apply visual progress based on current reading position
+     * Dims text that has already been read
+     */
+    applyReadingProgress() {
+        if (!this.isInitialized || this.textSegments.length === 0) {
+            return;
+        }
+
+        // Find the segment that corresponds to the current reading position
+        let progressIndex = -1;
+
+        for (let i = 0; i < this.textSegments.length; i++) {
+            const span = this.textSegments[i];
+            const segmentStart = parseInt(span.dataset.startPos);
+
+            if (segmentStart <= this.currentReadingPosition) {
+                progressIndex = i;
+            } else {
+                break;
+            }
+        }
+
+        // Apply styling based on reading progress
+        for (let i = 0; i < this.textSegments.length; i++) {
+            const span = this.textSegments[i];
+
+            if (i < progressIndex) {
+                // Already read - dim it
+                span.className = span.className.replace(/\b(current-reading-text|unread-text|current-position-text)\b/g, '').trim() + ' read-text';
+            } else if (i === progressIndex) {
+                // Current position - mark as ready to read
+                span.className = span.className.replace(/\b(current-reading-text|read-text|unread-text)\b/g, '').trim() + ' current-position-text';
+            } else {
+                // Not yet read - normal styling
+                span.className = span.className.replace(/\b(current-reading-text|read-text|current-position-text)\b/g, '').trim() + ' unread-text';
+            }
+        }
+
+        // Scroll to current reading position
+        if (progressIndex >= 0 && this.textSegments[progressIndex]) {
+            this.textSegments[progressIndex].scrollIntoView({
+                behavior: 'smooth',
+                block: 'center',
+                inline: 'nearest'
+            });
+        }
+    }
+
+    /**
+     * Start monitoring subtitles for highlighting
+     * @param {HTMLElement} subtitlesElement - The subtitles element to monitor
+     */
+    startSubtitleMonitoring(subtitlesElement) {
+        // Disconnect existing observer
+        if (this.subtitleObserver) {
+            this.subtitleObserver.disconnect();
+        }
+
+        if (!subtitlesElement) {
+            console.warn('⚠️ Subtitles element not found');
+            return;
+        }
+
+        // Create mutation observer to watch for subtitle changes
+        this.subtitleObserver = new MutationObserver((mutations) => {
+            mutations.forEach((mutation) => {
+                if (mutation.type === 'childList' || mutation.type === 'characterData') {
+                    const subtitleText = subtitlesElement.textContent.trim();
+
+                    if (subtitleText && this.isInitialized) {
+                        // Queue highlighting with delay
+                        setTimeout(() => {
+                            this.highlightText(subtitleText);
+                        }, this.highlightDelay);
+                    }
+                }
+            });
+        });
+
+        // Start observing
+        this.subtitleObserver.observe(subtitlesElement, {
+            childList: true,
+            subtree: true,
+            characterData: true
+        });
+    }
+
+    /**
+     * Stop monitoring subtitles
+     */
+    stopSubtitleMonitoring() {
+        if (this.subtitleObserver) {
+            this.subtitleObserver.disconnect();
+            this.subtitleObserver = null;
+        }
+    }
+
+    /**
+     * Reset highlighter state
+     */
+    reset() {
+        this.stopSubtitleMonitoring();
+        this.isInitialized = false;
+        this.textSegments = [];
+        this.fullText = '';
+        this.currentReadingPosition = 0;
+        this.currentHighlightIndex = -1;
+    }
+
+    /**
+     * Get reading progress
+     * @returns {Object} Progress information
+     */
+    getProgress() {
+        const totalLength = this.fullText.length;
+        const progressPercent = totalLength > 0 ? (this.currentReadingPosition / totalLength * 100).toFixed(1) : 0;
+
+        return {
+            position: this.currentReadingPosition,
+            totalLength: totalLength,
+            progressPercent: progressPercent,
+            currentIndex: this.currentHighlightIndex,
+            totalSegments: this.textSegments.length
+        };
+    }
+
+    /**
+     * Update reading position (for external bookmark loading)
+     * @param {number} position - New reading position
+     */
+    setReadingPosition(position) {
+        this.currentReadingPosition = position;
+        this.applyReadingProgress();
+    }
+
+    /**
+     * Escape HTML
+     * @param {string} text - Text to escape
+     * @returns {string} Escaped text
+     */
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+}
+
+// Export for global use
+window.TextHighlighter = TextHighlighter;
