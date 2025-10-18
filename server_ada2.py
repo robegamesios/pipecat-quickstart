@@ -93,6 +93,8 @@ def create_app(ada2_client_path: str) -> FastAPI:
             injection = (
                 "<script>\n"
                 "(function(){\n"
+                "  // Reduce browser console noise: keep only errors\n"
+                "  try{ const __noop__=()=>{}; console.log=__noop__; console.info=__noop__; console.debug=__noop__; console.warn=__noop__; }catch(e){}\n"
                 "  const OrigPC = window.RTCPeerConnection;\n"
                 "  if(!OrigPC) return;\n"
                 "  // Ensure lipsync processor is loaded when avatar is ready. Fallback to shim if module shape differs.\n"
@@ -138,13 +140,31 @@ def create_app(ada2_client_path: str) -> FastAPI:
                 "        'overflow:hidden',\n"
                 "        'display:none',\n"
                 "        '-webkit-line-clamp:3',\n"
-                "        'display:-webkit-box',\n"
                 "        '-webkit-box-orient: vertical'\n"
                 "      ].join(';');\n"
                 "      document.body.appendChild(el);\n"
                 "    }\n"
                 "    return el;\n"
                 "  }\n"
+                "  // Try to reuse the existing status label in the ADA2 UI, e.g., 'Avatar Ready' or 'Voice chat connected'.\n"
+                "  function findStatusLabel(){\n"
+                "    const texts = ['avatar ready','voice chat connected','speak now'];\n"
+                "    const nodes = document.querySelectorAll('div,span,p');\n"
+                "    for(const n of nodes){ const t=(n.textContent||'').toLowerCase(); for(const key of texts){ if(t.includes(key)){ return n; } } }\n"
+                "    return null;\n"
+                "  }\n"
+                "  let __statusEl=null; let __statusOrig=''; let __toolActive=false; let __speakingActive=false; let __overlayEl=null;\n"
+                "  function ensureStatusEl(){ try{ if(!__statusEl){ __statusEl = findStatusLabel(); if(__statusEl){ __statusOrig = __statusEl.textContent||''; } } }catch(e){} }\n"
+                "  function setStatusText(text){ ensureStatusEl(); if(!__statusEl) return; __statusEl.textContent = text; }\n"
+                "  function setStatusHidden(h){ ensureStatusEl(); if(!__statusEl) return; __statusEl.style.visibility = h ? 'hidden' : 'visible'; }\n"
+                "  function ensureOverlay(){ if(__overlayEl) return __overlayEl; ensureStatusEl(); if(!__statusEl) return null; const r = __statusEl.getBoundingClientRect(); const d=document.createElement('div'); d.id='tool-overlay'; d.style.position='fixed'; d.style.left=(r.left)+'px'; d.style.top=(r.top)+'px'; d.style.display='none'; d.style.zIndex=9999; d.style.pointerEvents='none'; d.style.background='rgba(0,0,0,0.55)'; d.style.borderRadius='8px'; d.style.fontSize='13px'; d.style.letterSpacing='0.2px'; d.style.color='#fff'; d.style.alignItems='center'; d.style.justifyContent='center'; d.style.textAlign='center'; d.style.padding='6px 10px'; d.style.boxSizing='border-box'; d.style.whiteSpace='nowrap'; document.body.appendChild(d); __overlayEl=d; return d; }\n"
+                "  function positionOverlay(){ try{ const r=(__statusEl||document.body).getBoundingClientRect(); if(__overlayEl){ __overlayEl.style.left=(r.left||18)+'px'; __overlayEl.style.top=(r.top||18)+'px'; } }catch(e){} }\n"
+                "  function showOverlay(text){ const d=ensureOverlay(); if(!d) return; positionOverlay(); d.textContent = text||''; d.style.display='inline-flex'; setStatusHidden(true); }\n"
+                "  function hideOverlay(){ if(__overlayEl){ __overlayEl.style.display='none'; } setStatusHidden(false); }\n"
+                "  /* removed hide/show of underlying label to avoid blank screen */\n"
+                "  function holdLabel(label){ showOverlay(label); }\n"
+                "  function quietLabel(){ showOverlay(''); }\n"
+                "  function releaseLabel(){ hideOverlay(); }\n"
                 "  function attachChannel(ch){\n"
                 "    if(!ch) return;\n"
                 "    ch.onopen = () => { console.log('[Ada2DC] open'); try { ch.send('ping-' + Date.now()); } catch(e){};\n"
@@ -155,11 +175,13 @@ def create_app(ada2_client_path: str) -> FastAPI:
                 "      let msg = null; try{ msg = JSON.parse(ev.data); }catch(e){ return; }\n"
                 "      const box = getBox();\n"
                 "      switch(msg && msg.type){\n"
-                "        case 'subtitle_start': /*console.log('[Ada2DC] subtitle_start');*/ box.textContent=''; box.style.display='-webkit-box'; break;\n"
+                "        case 'subtitle_start': /*console.log('[Ada2DC] subtitle_start');*/ box.textContent=''; box.style.display='-webkit-box'; __speakingActive=true; /* no overlay change here to avoid flicker */ break;\n"
                 "        case 'subtitle_delta': /*console.log('[Ada2DC] subtitle_delta', msg.text);*/ box.textContent = (msg.text||''); box.style.display='-webkit-box'; break;\n"
-                "        case 'subtitle_end': /*console.log('[Ada2DC] subtitle_end');*/ box.textContent = (msg.text||''); box.style.display = (box.textContent?'-webkit-box':'none'); break;\n"
+                "        case 'subtitle_end': /*console.log('[Ada2DC] subtitle_end');*/ box.textContent = (msg.text||''); box.style.display = (box.textContent?'-webkit-box':'none'); __speakingActive=false; releaseLabel(); __toolActive=false; break;\n"
                 "        case 'tts_interrupt':\n"
-                "          console.log('[Ada2DC] tts_interrupt'); try{ window.__ttsBuf = {}; window.__ttsMeta = {}; if(window.__TH_AVATAR__ && window.__TH_AVATAR__.stopSpeaking){ window.__TH_AVATAR__.stopSpeaking(); } }catch(e){}\n"
+                "          console.log('[Ada2DC] tts_interrupt'); try{ window.__ttsBuf = {}; window.__ttsMeta = {}; if(window.__TH_AVATAR__ && window.__TH_AVATAR__.stopSpeaking){ window.__TH_AVATAR__.stopSpeaking(); } }catch(e){} holdLabel('User'); break;\n"
+                "        case 'log_tool':\n"
+                "          try{ const phase = (msg.phase||''); if(phase==='llm_only'){ /* ignore: no Local LLM display */ break; } const name = (msg.name||''); let label='Tool'; if(name==='google_search'){ label='Google Search'; } else if(name==='get_current_weather'){ label='Weather Search'; } if (phase === 'start') {__toolActive=true; holdLabel(label); } else if (phase === 'end') {__toolActive = false; releaseLabel(); }}catch(e){}\n"
                 "          break;\n"
                 "        case 'tts_sentence_start':\n"
                 "          console.log('[Ada2DC] sentence_start', msg.id); window.__ttsBuf[msg.id] = []; window.__ttsMeta[msg.id] = { text: msg.text||'', sample_rate: msg.sample_rate||24000 };\n"
@@ -281,8 +303,14 @@ def main():
     parser.add_argument("--port", type=int, default=7860)
     parser.add_argument(
         "--ada2-path",
-        default=os.getenv("ADA2_CLIENT_PATH", "/Users/robenriquez/Documents/00_Github/ADA2/pipecat-client"),
-        help="Path to ADA2/pipecat-client directory",
+        default=os.getenv(
+            "ADA2_CLIENT_PATH",
+            os.path.join(os.path.dirname(__file__), "assets", "ada2-client"),
+        ),
+        help=(
+            "Path to ADA2/pipecat-client build directory. "
+            "Defaults to assets/ada2-client inside this project."
+        ),
     )
     args = parser.parse_args()
 

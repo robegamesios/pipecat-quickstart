@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ADA2 - AI Avatar</title>
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml">
+  <base href="/ada2-static/">
+  
+  <!-- Three.js imports (LOCAL) -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "./modules/three/three.module.js",
+      "three/addons/": "./modules/three/examples/jsm/"
+    }
+  }
+  </script>
+  
+  <!-- Main styles -->
+  <style>
+    body, html {
+      margin: 0;
+      padding: 0;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background: linear-gradient(135deg, #1a1a2e, #16213e);
+      color: white;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+    
+    #avatar-container {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 1;
+    }
+    
+    #voice-controls {
+      position: fixed;
+      bottom: 30px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 100;
+      display: flex;
+      gap: 15px;
+      align-items: center;
+    }
+    
+    #connect-btn {
+      padding: 15px 30px;
+      font-size: 16px;
+      border: none;
+      border-radius: 25px;
+      background: linear-gradient(45deg, #667eea, #764ba2);
+      color: white;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+    }
+    
+    #connect-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+    }
+    
+    #connect-btn:disabled {
+      background: #555;
+      cursor: not-allowed;
+      transform: none;
+    }
+    
+    #status {
+      position: fixed;
+      top: 20px;
+      left: 20px;
+      z-index: 100;
+      background: rgba(0, 0, 0, 0.8);
+      padding: 10px 15px;
+      border-radius: 10px;
+      font-size: 14px;
+      backdrop-filter: blur(10px);
+    }
+    
+    .pulse {
+      animation: pulse 1.5s infinite;
+    }
+    
+    @keyframes pulse {
+      0% { transform: scale(1); }
+      50% { transform: scale(1.05); }
+      100% { transform: scale(1); }
+    }
+  </style>
+</head>
+
+<body>
+  <div id="avatar-container"></div>
+  
+  <div id="status">🤖 Initializing avatar...</div>
+  
+  <div id="voice-controls">
+    <button id="connect-btn">Connect Voice Chat</button>
+  </div>
+  
+  <!-- Main application script -->
+  <script type="module">
+    import { TalkingHead } from './modules/talkinghead.mjs';
+    
+    class AvatarVoiceChat {
+      constructor() {
+        this.avatar = null;
+        this.peerConnection = null;
+        this.localStream = null;
+        this.isConnected = false;
+        this.isSpeaking = false;
+        this.toolActive = false;
+        this.connectedLabel = '✅ Connected to Voice Chat';
+        this.isUserTalking = false;
+        this._lastStatus = '';
+        
+        this.statusEl = document.getElementById('status');
+        this.connectBtn = document.getElementById('connect-btn');
+        
+        this._idleTimer = null;
+        this._lastActivityAt = 0;
+        this.IDLE_RESET_MS = 1200;
+
+        this._bumpActivity = () => {
+          this._lastActivityAt = performance.now();
+          if (this._idleTimer) { clearTimeout(this._idleTimer); this._idleTimer = null; }
+        };
+
+        this._toolHoldUntil = 0;
+        this.TOOL_HOLD_MS = 1200;
+
+        this._scheduleIdleReset = () => {
+          if (this._idleTimer) { clearTimeout(this._idleTimer); }
+          this._idleTimer = setTimeout(() => {
+            const now = performance.now();
+            const idle = now - this._lastActivityAt;
+            const toolExpired = now >= this._toolHoldUntil;
+            if (idle >= this.IDLE_RESET_MS && toolExpired) {
+              this.toolActive = false;
+              this.updateStatus(this.connectedLabel);
+
+              // also clear subtitles
+              const box = this.getSubtitlesBox();
+              box.textContent = '';
+              box.style.display = 'none';
+            }
+          }, this.IDLE_RESET_MS);
+        };
+
+        this.init();
+      }
+      
+      async init() {
+        // Initialize avatar first
+        await this.initializeAvatar();
+        
+        // Setup voice controls
+        this.setupVoiceControls();
+        
+        this.updateStatus('🤖 Avatar ready - Click to connect voice chat');
+      }
+      
+      async initializeAvatar() {
+        try {
+          console.log('🤖 Initializing 3D avatar...');
+          
+          const nodeAvatar = document.getElementById('avatar-container');
+          this.avatar = new TalkingHead(nodeAvatar, {
+            ttsEndpoint: "N/A",
+            lipsyncModules: [],
+            cameraView: "upper",
+            mixerGainSpeech: 3,
+            modelMovementFactor: 1.5,
+            avatarSpeakingEyeContact: 0.7,
+            avatarSpeakingHeadMove: 0.3
+          });
+          
+          // Load your LOCAL avatar (models/avatar.glb relative to index.html)
+          await this.avatar.showAvatar({
+            url: 'models/avatar.glb',
+            body: 'F',
+            avatarMood: 'neutral',
+            lipsyncLang: 'en'
+          }, (ev) => {
+            if (ev.lengthComputable) {
+              let val = Math.min(100, Math.round(ev.loaded/ev.total * 100));
+              this.updateStatus(`🤖 Loading avatar ${val}%`);
+            }
+          });
+          
+          console.log('✅ 3D Avatar initialized successfully');
+          this.updateStatus('🤖 3D Avatar loaded');
+
+          // Optional: try to load lipsync module (English) if present
+          try {
+            const mod = await import('/ada2-injected/lipsync-en.mjs');
+            const LipsyncEn = mod.LipsyncEn || mod.default;
+            if (LipsyncEn) {
+              this.avatar.lipsync = this.avatar.lipsync || {};
+              this.avatar.lipsync['en'] = new LipsyncEn();
+              console.log('🔤 Lipsync (en) ready');
+            }
+          } catch (e) {
+            console.warn('Lipsync module not available:', e);
+          }
+          
+        } catch (error) {
+          console.warn('3D Avatar failed, using fallback:', error);
+          this.initializeFallbackAvatar();
+        }
+      }
+      
+      initializeFallbackAvatar() {
+        const container = document.getElementById('avatar-container');
+        container.innerHTML = `
+          <div style="
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            text-align: center;
+          ">
+            <div style="font-size: 8rem; margin-bottom: 20px;" id="avatar-emoji">🤖</div>
+            <h1 style="margin: 0; font-size: 2rem;">ADA2</h1>
+            <p style="margin: 10px 0; opacity: 0.8;">AI Voice Assistant</p>
+          </div>
+        `;
+        
+        this.avatar = {
+          startSpeaking: () => {
+            const emoji = document.getElementById('avatar-emoji');
+            if (emoji) emoji.classList.add('pulse');
+          },
+          stopSpeaking: () => {
+            const emoji = document.getElementById('avatar-emoji');
+            if (emoji) emoji.classList.remove('pulse');
+          }
+        };
+        
+        this.updateStatus('🤖 Fallback avatar ready');
+      }
+      
+      setupVoiceControls() {
+        this.connectBtn.addEventListener('click', () => {
+          if (this.isConnected) {
+            this.disconnect();
+          } else {
+            this.connect();
+          }
+        });
+      }
+      
+      async connect() {
+        try {
+          this.connectBtn.disabled = true;
+          this.updateStatus('🔄 Connecting to voice chat...');
+          
+          // Get microphone access
+          this.localStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+              sampleRate: 24000
+            }
+          });
+          // Start monitoring local mic for 'User' status
+          this.monitorMicForUser(this.localStream);
+          
+          // Create WebRTC connection to pipecat
+          await this.setupWebRTC();
+          
+        } catch (error) {
+          console.error('Connection failed:', error);
+          this.updateStatus(`❌ Connection failed: ${error.message}`);
+          this.connectBtn.disabled = false;
+        }
+      }
+      
+      async setupWebRTC() {
+        // Create peer connection
+        this.peerConnection = new RTCPeerConnection({
+          iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+        });
+
+        // Handle app data channel for status/subtitles from server
+        this.peerConnection.ondatachannel = (ev) => this.attachAppChannel(ev.channel);
+
+        // Add local stream
+        this.localStream.getTracks().forEach(track => {
+          this.peerConnection.addTrack(track, this.localStream);
+        });
+        
+        // Handle remote audio stream
+        this.peerConnection.ontrack = (event) => {
+          console.log('🎵 Received remote audio stream');
+          const remoteAudio = new Audio();
+          remoteAudio.srcObject = event.streams[0];
+          remoteAudio.muted = false;
+          remoteAudio.volume = 1.0;
+          remoteAudio.play().catch(()=>{});
+          
+          // Monitor audio for avatar animation
+          this.monitorAudioForAvatar(event.streams[0]);
+        };
+        
+        // Handle connection state changes
+        this.peerConnection.onconnectionstatechange = () => {
+          const state = this.peerConnection.connectionState;
+          console.log(`🔗 Connection state: ${state}`);
+          
+          if (state === 'connected') {
+            this.isConnected = true;
+            this.connectBtn.textContent = 'Disconnect';
+            this.connectBtn.disabled = false;
+            this.updateStatus(this.connectedLabel);
+          } else if (state === 'failed' || state === 'disconnected') {
+            this.handleDisconnection();
+          }
+        };
+        
+        // Create app data channel proactively so server can send messages
+        try {
+          const dc = this.peerConnection.createDataChannel('app', { ordered: true });
+          this.attachAppChannel(dc);
+        } catch (e) {
+          console.warn('Could not create app data channel:', e);
+        }
+
+        // Create offer and connect to pipecat server
+        const offer = await this.peerConnection.createOffer();
+        await this.peerConnection.setLocalDescription(offer);
+        
+        // Send offer to pipecat server
+        const response = await fetch('/api/offer', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            type: 'offer',
+            sdp: offer.sdp 
+          })
+        });
+        
+        const answer = await response.json();
+        await this.peerConnection.setRemoteDescription({
+          type: 'answer',
+          sdp: answer.sdp
+        });
+      }
+
+      getSubtitlesBox() {
+        let el = document.getElementById('subtitles');
+        if (!el) {
+          el = document.createElement('div');
+          el.id = 'subtitles';
+          el.style.cssText = [
+            'position:fixed',
+            'bottom:80px',
+            'left:50%',
+            'transform:translateX(-50%)',
+            'max-width:80vw',
+            'padding:8px 12px',
+            'background:rgba(0,0,0,0.6)',
+            'border-radius:10px',
+            'font-size:18px',
+            'line-height:1.25',
+            'max-height: 3.75em',
+            'text-align:center',
+            'z-index:200',
+            'color:#fff',
+            'pointer-events:none',
+            'overflow:hidden',
+            'display:none',
+            '-webkit-line-clamp:3',
+            '-webkit-box-orient: vertical'
+          ].join(';');
+          document.body.appendChild(el);
+        }
+        return el;
+      }
+
+      attachAppChannel(ch) {
+        if (!ch) return;
+        ch.onopen = () => {
+          try { ch.send('ping-' + Date.now()); } catch(e) {}
+        };
+        ch.onmessage = (ev) => {
+          let msg = null; try { msg = JSON.parse(ev.data); } catch(e) { return; }
+          const box = this.getSubtitlesBox();
+          // Helpers for tts sentence assembly -> avatar.speakAudio
+          const b64ToBuf = (b64) => { try { const bin=atob(b64); const len=bin.length; const buf=new ArrayBuffer(len); const arr=new Uint8Array(buf); for(let i=0;i<len;i++){arr[i]=bin.charCodeAt(i);} return buf; } catch(e){ return null; } };
+          window.__ttsBuf = window.__ttsBuf || {};
+          window.__ttsMeta = window.__ttsMeta || {};
+          switch (msg && msg.type) {
+            case 'subtitle_start':
+              this._bumpActivity();
+              box.textContent = '';
+              box.style.display = '-webkit-box';
+              break;
+            case 'subtitle_delta':
+              this._bumpActivity();
+              box.textContent = (msg.text || '');
+              box.style.display = '-webkit-box';
+              break;
+            case 'subtitle_end':
+              this._bumpActivity();
+              this.toolActive = false;
+              this._scheduleIdleReset();
+              box.textContent = (msg.text || '');
+              box.style.display = (box.textContent ? '-webkit-box' : 'none');
+              break;
+            case 'tts_interrupt':
+              this._bumpActivity();
+              if (!this.toolActive && !this.isSpeaking) {
+                this.updateStatus('👤 User...');
+              }
+              break;
+            case 'log_tool': {
+              const phase = (msg.phase || '');
+              if (phase === 'llm_only') break;
+              const name = (msg.name || '');
+              const label = (name === 'google_search') ? '🔍 Google Search...'
+                          : (name === 'get_current_weather') ? '☀️ Weather Search...'
+                          : 'Tool';
+              this.toolActive = true;
+              this._toolHoldUntil = performance.now() + this.TOOL_HOLD_MS;
+              this.updateStatus(label);
+              this._bumpActivity();
+              break;
+            }
+            case 'tts_sentence_start': {
+              this._bumpActivity();
+              const id = msg.id; window.__ttsBuf[id] = []; window.__ttsMeta[id] = { text: msg.text||'', sample_rate: msg.sample_rate||24000 };
+              break;
+            }
+            case 'tts_sentence_chunk': {
+              this._bumpActivity();
+              const id = msg.id; if (window.__ttsBuf[id]){ const buf = b64ToBuf(msg.chunk); if (buf) window.__ttsBuf[id].push(buf); }
+              break;
+            }
+            case 'tts_sentence_end': {
+              this._bumpActivity();
+              const id = msg.id; (async () => {
+                const bufs = window.__ttsBuf[id] || []; const meta = window.__ttsMeta[id] || {}; delete window.__ttsBuf[id]; delete window.__ttsMeta[id];
+                if (!bufs.length) return;
+                const head = this.avatar || null; if (!head || !head.speakAudio) return;
+                try { head.opt = head.opt || {}; head.opt.pcmSampleRate = meta.sample_rate || 24000; } catch(e) {}
+                const text = (meta.text||'').trim(); const words = text ? text.split(' ').filter(Boolean) : [];
+                const totalBytes = bufs.reduce((a,b)=>a + b.byteLength, 0);
+                const sr = meta.sample_rate || 24000;
+                const totalMs = Math.max(200, Math.round((totalBytes/2)/sr*1000));
+                const n = Math.max(1, words.length); const base = Math.floor(totalMs / n); const wtimes=[]; const wdurations=[]; let acc=0;
+                for (let i=0;i<n;i++){ const dur = (i===n-1) ? (totalMs-acc) : base; wtimes.push(acc); wdurations.push(Math.max(70, dur)); acc += dur; }
+                try { if (head.setMixerGain) head.setMixerGain(0, null); } catch(e) {}
+                try { head.speakAudio({ audio: bufs, words, wtimes, wdurations }, { lipsyncLang: 'en' }); } catch(e) { console.warn('speakAudio error', e); }
+              })();
+              break;
+            }
+          }
+        };
+      }
+      
+      monitorAudioForAvatar(stream) {
+        const audioContext = new AudioContext();
+        const source = audioContext.createMediaStreamSource(stream);
+        const analyser = audioContext.createAnalyser();
+        
+        analyser.fftSize = 256;
+        source.connect(analyser);
+        
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        
+        const checkAudio = () => {
+          if (!this.isConnected) return;
+          
+          analyser.getByteFrequencyData(dataArray);
+          const average = dataArray.reduce((a, b) => a + b) / dataArray.length;
+          
+          if (average > 15 && !this.isSpeaking) {
+            this.isSpeaking = true;
+            if (this.avatar && this.avatar.startSpeaking) {
+              this.avatar.startSpeaking();
+            }
+            console.log('🎤 Avatar started speaking');
+          } else if (average <= 15 && this.isSpeaking) {
+            this.isSpeaking = false;
+            console.log('🎤 Avatar stopped speaking');
+          }
+          
+          requestAnimationFrame(checkAudio);
+        };
+        
+        checkAudio();
+      }
+
+      monitorMicForUser(stream) {
+        try {
+          const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+          const source = audioContext.createMediaStreamSource(stream);
+          const analyser = audioContext.createAnalyser();
+          analyser.fftSize = 256;
+          source.connect(analyser);
+          const data = new Uint8Array(analyser.frequencyBinCount);
+
+          const tick = () => {
+            if (!this.isConnected) return;
+            analyser.getByteFrequencyData(data);
+            const avg = data.reduce((a,b)=>a+b,0)/data.length;
+            const talking = avg > 18;
+            if (talking !== this.isUserTalking) {
+              this.isUserTalking = talking;
+              if (!this.toolActive && !this.isSpeaking) {
+                this.updateStatus(talking ? 'User' : this.connectedLabel);
+              }
+            }
+            requestAnimationFrame(tick);
+          };
+          tick();
+        } catch (e) {
+          console.warn('Mic monitor unavailable:', e);
+        }
+      }
+      
+      disconnect() {
+        if (this.peerConnection) {
+          this.peerConnection.close();
+          this.peerConnection = null;
+        }
+        
+        if (this.localStream) {
+          this.localStream.getTracks().forEach(track => track.stop());
+          this.localStream = null;
+        }
+        
+        this.handleDisconnection();
+      }
+      
+      handleDisconnection() {
+        this.isConnected = false;
+        this.isSpeaking = false;
+        this.connectBtn.textContent = 'Connect Voice Chat';
+        this.connectBtn.disabled = false;
+        this.avatar?.stopSpeaking();
+        this.updateStatus('🤖 Voice chat disconnected');
+      }
+      
+      updateStatus(message) {
+        const text = String(message || '');
+        if (text === this._lastStatus) return;
+        this._lastStatus = text;
+        this.statusEl.textContent = text;
+      }
+    }
+    
+    // Initialize the application
+    new AvatarVoiceChat();
+  </script>
+</body>
+
+</html>

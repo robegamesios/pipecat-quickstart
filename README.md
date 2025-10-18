@@ -161,3 +161,25 @@ uv run pcc deploy
 - **Browser permissions**: Allow microphone access when prompted
 - **Connection issues**: Try a different browser or check VPN/firewall settings
 - **Audio issues**: Verify microphone and speakers are working and not muted
+
+### Built-in Tool Calling
+
+This quickstart includes two tools that demonstrate OpenAI tool/function calling:
+
+- Weather: `get_current_weather(location: str, format: "celsius"|"fahrenheit", when?: str)`
+- Location: any city or place name
+- Example prompt: "What's the weather in Paris in celsius?"
+
+Implementation details:
+- Tool schema and handler live in `modules/tools/weather.py` and call the wttr.in JSON API.
+- The tool is registered in `bot.py` and added to the OpenAI context, so supported models (e.g., `gpt-4o-mini`) can call it.
+
+- Google Search: `google_search(query: str, max_results?: int, date_restrict?: str, safe?: "off"|"active", gl?: str, hl?: str)`
+- Example prompt: "Find the latest news about SpaceX this week."
+
+To enable Google Search, set the following in your `.env`:
+
+```
+GOOGLE_API_KEY=your_google_api_key
+GOOGLE_CSE_ID=your_custom_search_engine_id
+```

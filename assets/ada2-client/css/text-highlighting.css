@@ -1,0 +1,120 @@
+/**
+ * Shared Text Highlighting Styles for ADA2
+ * Used by both document widget and chat widget for consistent highlighting during TTS
+ */
+
+/* Text segment base styles */
+.text-segment {
+    display: inline;
+    transition: all 0.3s ease;
+}
+
+/* Text that has already been read - dimmed */
+.text-segment.read-text {
+    opacity: 0.5;
+    color: #888;
+}
+
+/* Currently being read - bright highlight with animation */
+.text-segment.current-reading-text {
+    background: linear-gradient(45deg, #ffeb3b, #ffc107);
+    color: #000;
+    font-weight: bold;
+    padding: 2px 1px;
+    border-radius: 3px;
+    animation: reading-pulse 2s ease-in-out infinite alternate;
+}
+
+/* Text that hasn't been read yet - normal styling */
+.text-segment.unread-text {
+    color: #fff;
+    opacity: 1;
+}
+
+/* Current reading position marker - green border */
+.text-segment.current-position-text {
+    color: #fff;
+    opacity: 1;
+    border-left: 3px solid #4CAF50;
+    padding-left: 6px;
+    margin-left: -6px;
+}
+
+/* Clickable segments (for document widget) */
+.text-segment.clickable-segment {
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+.text-segment.clickable-segment:hover {
+    background-color: rgba(76, 175, 80, 0.1);
+    border-radius: 2px;
+}
+
+/* Bookmark set feedback animation */
+.text-segment.bookmark-set-feedback {
+    background: linear-gradient(45deg, #4CAF50, #8BC34A) !important;
+    color: white !important;
+    border-radius: 3px !important;
+    padding: 2px 4px !important;
+    animation: bookmark-set-pulse 1s ease-out;
+}
+
+/* Keyframe animations */
+@keyframes bookmark-set-pulse {
+    0% {
+        transform: scale(1);
+        box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.7);
+    }
+    50% {
+        transform: scale(1.05);
+        box-shadow: 0 0 0 10px rgba(76, 175, 80, 0);
+    }
+    100% {
+        transform: scale(1);
+        box-shadow: 0 0 0 0 rgba(76, 175, 80, 0);
+    }
+}
+
+@keyframes reading-pulse {
+    from { 
+        background: linear-gradient(45deg, #ffeb3b, #ffc107);
+        opacity: 1;
+    }
+    to { 
+        background: linear-gradient(45deg, #ffc107, #ff9800);
+        opacity: 0.95;
+    }
+}
+
+/* Chat-specific styles */
+.chat-response-text .text-segment {
+    /* Inherit chat text styling but allow highlighting to override */
+}
+
+.chat-response-text .text-segment.current-reading-text {
+    /* Ensure highlighting is visible on dark chat background */
+    background: linear-gradient(45deg, #ffeb3b, #ffc107);
+    color: #000;
+    font-weight: bold;
+    padding: 2px 1px;
+    border-radius: 3px;
+}
+
+.chat-response-text .text-segment.read-text {
+    /* Dimmed chat text that's been read */
+    opacity: 0.4;
+    color: #666;
+}
+
+.chat-response-text .text-segment.unread-text {
+    /* Normal chat text styling */
+    color: #ddd;
+    opacity: 1;
+}
+
+/* Document widget specific overrides (if needed) */
+.document-content-viewer .text-segment.unread-text {
+    color: #fff;
+    opacity: 1;
+}
