@@ -217,7 +217,7 @@ def create_app(ada2_client_path: str) -> FastAPI:
                 "      const box = getBox();\n"
                 "      switch(msg && msg.type){\n"
                 "        case 'subtitle_start': /*console.log('[Ada2DC] subtitle_start');*/ box.textContent=''; box.style.display='-webkit-box'; __speakingActive=true; /* no overlay change here to avoid flicker */ break;\n"
-                "        case 'subtitle_delta': /*console.log('[Ada2DC] subtitle_delta', msg.text);*/ box.textContent = (msg.text||''); box.style.display='-webkit-box'; break;\n"
+                "        case 'subtitle_delta': /*console.log('[Ada2DC] subtitle_delta', msg.text);*/ box.textContent = (msg.text||''); box.style.display='-webkit-box'; try{ if(window.documentWidget && window.documentWidget.textHighlighter && window.documentWidget.textHighlighter.isInitialized){ setTimeout(()=>{ try{ window.documentWidget.textHighlighter.highlightText(String(msg.text||'')); }catch(e){} }, 50);} }catch(e){} break;\n"
                 "        case 'subtitle_end': /*console.log('[Ada2DC] subtitle_end');*/ box.textContent = (msg.text||''); box.style.display = (box.textContent?'-webkit-box':'none'); __speakingActive=false; releaseLabel(); __toolActive=false; break;\n"
                 "        case 'tts_interrupt':\n"
                 "          console.log('[Ada2DC] tts_interrupt'); try{ window.__ttsBuf = {}; window.__ttsMeta = {}; if(window.__TH_AVATAR__ && window.__TH_AVATAR__.stopSpeaking){ window.__TH_AVATAR__.stopSpeaking(); } }catch(e){} holdLabel('User'); break;\n"

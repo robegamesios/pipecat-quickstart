@@ -935,6 +935,7 @@ class DocumentWidget {
             this.widget.style.display = 'flex';
             this.isVisible = true;
             document.body.classList.add('widget-visible');
+            try { const sub = document.getElementById('subtitles'); if(sub){ sub.style.left = 'calc(50% - 22vw)'; } } catch(_){ }
 
             // Trigger animation
             setTimeout(() => {
@@ -968,6 +969,7 @@ class DocumentWidget {
             if (window.widgetManager) {
                 window.widgetManager.widgetClosed('document');
             }
+            try { const sub = document.getElementById('subtitles'); if(sub){ sub.style.left = '50%'; } } catch(_){ }
         }
     }
 
