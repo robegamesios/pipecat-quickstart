@@ -10,7 +10,6 @@ from dotenv import load_dotenv
 
 from pipecat.adapters.schemas.function_schema import FunctionSchema
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
-from pipecat.frames.frames import TTSSpeakFrame
 from pipecat.services.llm_service import FunctionCallParams
 
 # -----------------------------------------------------------------------------
@@ -397,10 +396,8 @@ async def fetch_weather(params: FunctionCallParams) -> None:
         })
         return
 
-    try:
-        await params.llm.push_frame(TTSSpeakFrame("Let me check on that."))
-    except Exception as e:
-        logger.debug("TTSSpeakFrame push failed (non-fatal): %s", e)
+    # Do not speak from the tool; return data so the LLM can produce a single
+    # final answer. Speaking here would cause duplicate audio with the LLM turn.
 
     try:
         lat, lng, resolved = await _geocode_place(location)
@@ -461,11 +458,7 @@ async def fetch_weather(params: FunctionCallParams) -> None:
                 result.update(current)
                 result["note"] = "forecast_unavailable_fallback_to_current"
 
-            # SPEAK the forecast including highs/lows if present
-            try:
-                await params.llm.push_frame(TTSSpeakFrame(_format_spoken_weather(result)))
-            except Exception as e:
-                logger.debug("TTSSpeakFrame summary failed (non-fatal): %s", e)
+            # Return structured result; LLM will format the final spoken answer.
 
             await params.result_callback(result)
             return
@@ -491,11 +484,7 @@ async def fetch_weather(params: FunctionCallParams) -> None:
                 logger.warning("Daily forecast unavailable for 'now' (%s); skipping highs/lows fallback", e.response.status_code)
                 result["note_daily"] = "daily_unavailable_for_now"
 
-        # SPEAK the current conditions including highs/lows
-        try:
-            await params.llm.push_frame(TTSSpeakFrame(_format_spoken_weather(result)))
-        except Exception as e:
-            logger.debug("TTSSpeakFrame summary failed (non-fatal): %s", e)
+        # Return structured result; LLM will format and speak once.
 
         await params.result_callback(result)
 
