@@ -219,6 +219,8 @@ def create_app(ada2_client_path: str) -> FastAPI:
                 "        case 'subtitle_start': /*console.log('[Ada2DC] subtitle_start');*/ box.textContent=''; box.style.display='-webkit-box'; __speakingActive=true; /* no overlay change here to avoid flicker */ break;\n"
                 "        case 'subtitle_delta': /*console.log('[Ada2DC] subtitle_delta', msg.text);*/ box.textContent = (msg.text||''); box.style.display='-webkit-box'; try{ if(window.documentWidget && window.documentWidget.textHighlighter && window.documentWidget.textHighlighter.isInitialized){ setTimeout(()=>{ try{ window.documentWidget.textHighlighter.highlightText(String(msg.text||'')); }catch(e){} }, 50);} }catch(e){} break;\n"
                 "        case 'subtitle_end': /*console.log('[Ada2DC] subtitle_end');*/ box.textContent = (msg.text||''); box.style.display = (box.textContent?'-webkit-box':'none'); __speakingActive=false; releaseLabel(); __toolActive=false; break;\n"
+                "        case 'assistant_full_text': try{ if(window.chatWidget && window.chatWidget.addToConversation){ window.chatWidget.addToConversation('assistant', String(msg.text||'')); } }catch(e){} break;\n"
+                "        case 'user_text': try{ if(window.chatWidget && window.chatWidget.addToConversation){ window.chatWidget.addToConversation('user', String(msg.text||'')); } }catch(e){} break;\n"
                 "        case 'tts_interrupt':\n"
                 "          console.log('[Ada2DC] tts_interrupt'); try{ window.__ttsBuf = {}; window.__ttsMeta = {}; if(window.__TH_AVATAR__ && window.__TH_AVATAR__.stopSpeaking){ window.__TH_AVATAR__.stopSpeaking(); } }catch(e){} holdLabel('User'); break;\n"
                 "        case 'log_tool':\n"
@@ -397,6 +399,28 @@ def create_app(ada2_client_path: str) -> FastAPI:
             return {"success": True}
         except Exception as e:
             logger.error("/api/tts/read: error=%s", e)
+            return {"success": False, "message": str(e)}
+
+    @app.post("/api/chat/send")
+    async def api_chat_send(request: dict):
+        """Send a user message to the existing LLM path for this session.
+
+        Body: { "text": "...", "pc_id": "optional" }
+        """
+        try:
+            from modules.chat_bridge import get_sender
+
+            text = str(request.get("text", "")).strip()
+            pc_id = request.get("pc_id")
+            if not text:
+                return {"success": False, "message": "Missing text"}
+            sender = get_sender(pc_id)
+            if not sender:
+                return {"success": False, "message": "No active chat session"}
+            await sender(text)
+            return {"success": True}
+        except Exception as e:
+            logger.error("/api/chat/send: error=%s", e)
             return {"success": False, "message": str(e)}
 
     # Manage active peer connections by pc_id

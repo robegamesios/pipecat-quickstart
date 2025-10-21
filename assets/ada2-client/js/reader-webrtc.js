@@ -11,6 +11,12 @@
     pc_id: null,
     connecting: false,
     isConnected(){ return !!(this.pc && this.pc.connectionState === 'connected'); },
+    disconnect(){
+      try { if (this.pc) { this.pc.close(); } } catch(_){}
+      this.pc = null;
+      this.pc_id = null;
+      this.connecting = false;
+    },
     async connect(){
       if (this.isConnected() || this.connecting) return true;
       this.connecting = true;
@@ -19,6 +25,22 @@
         // Receive-only audio
         try{ pc.addTransceiver('audio', { direction: 'recvonly' }); }catch(_){}
         pc.ontrack = (ev)=>{ if(ev && ev.streams && ev.streams[0]) playRemoteAudio(ev.streams[0]); };
+        // Receive app data channel for assistant/user text events
+        pc.ondatachannel = (ev) => {
+          const ch = ev && ev.channel;
+          if (!ch) return;
+          ch.onmessage = (e) => {
+            let msg=null; try{ msg = JSON.parse(e.data); }catch(_){ return; }
+            try{
+              if (!window.chatWidget || !window.chatWidget.addToConversation) return;
+              if (msg.type === 'assistant_full_text' && typeof msg.text === 'string') {
+                window.chatWidget.addToConversation('assistant', String(msg.text||''));
+              } else if (msg.type === 'user_text' && typeof msg.text === 'string') {
+                window.chatWidget.addToConversation('user', String(msg.text||''));
+              }
+            }catch(_){ }
+          };
+        };
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
         const resp = await fetch('/api/offer', {

@@ -49,6 +49,9 @@ from modules.tools import (
 from modules.tool_logger import ToolUsageLogger
 from modules.sentence_tts import SentenceTTSPipeline
 from modules.tts_bridge import register_speaker, unregister_speaker
+from modules.chat_bridge import register_sender, unregister_sender
+from modules.user_transcript_logger import UserTranscriptLogger
+from pipecat.audio.vad.vad_analyzer import VADParams
 
 load_dotenv(override=True)
 
@@ -109,6 +112,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
             transport.input(),
             rtvi,
             stt,
+            UserTranscriptLogger(),
             context_aggregator.user(),
             llm,
             sentence_tts,
@@ -129,6 +133,12 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
 
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
+        # Relax VAD slightly on first connect to avoid missing first short utterance
+        try:
+            from modules.services import get_vad
+            get_vad().set_params(VADParams(confidence=0.6, start_secs=0.12, stop_secs=0.6, min_volume=0.35))
+        except Exception:
+            pass
         # Register a speaker function for external chapter reading
         # Register a speaker function for external chapter reading
         try:
@@ -142,6 +152,12 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
                 await task.queue_frames([TTSSpeakFrame(text)])
 
             register_speaker(str(pc_id), _speak)
+            async def _send(text: str):
+                # Append a user message and trigger the LLM on the same pipeline
+                messages.append({"role": "user", "content": str(text)})
+                await task.queue_frames([LLMRunFrame()])
+
+            register_sender(str(pc_id), _send)
         except Exception:
             pass
         # Kick off the conversation only in chat mode
@@ -158,6 +174,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
                 or "default"
             )
             unregister_speaker(str(pc_id))
+            unregister_sender(str(pc_id))
         except Exception:
             pass
         await task.cancel()

@@ -324,6 +324,8 @@
             this.connectBtn.textContent = 'Disconnect';
             this.connectBtn.disabled = false;
             this.updateStatus(this.connectedLabel);
+            // Ensure we don't have a competing reader connection
+            try { if (window.readerRTC && window.readerRTC.isConnected()) { window.readerRTC.disconnect(); } } catch(e) {}
           } else if (state === 'failed' || state === 'disconnected') {
             this.handleDisconnection();
           }
@@ -352,6 +354,8 @@
         });
         
         const answer = await response.json();
+        // Stash pc_id so chat sends can target this session
+        try { this.pc_id = answer && answer.pc_id ? String(answer.pc_id) : null; } catch(_){}
         await this.peerConnection.setRemoteDescription({
           type: 'answer',
           sdp: answer.sdp
@@ -418,6 +422,12 @@
               this._scheduleIdleReset();
               box.textContent = (msg.text || '');
               box.style.display = (box.textContent ? '-webkit-box' : 'none');
+              break;
+            case 'assistant_full_text':
+              try { if (window.chatWidget && window.chatWidget.addToConversation) { window.chatWidget.addToConversation('assistant', String(msg.text||'')); } } catch(e) {}
+              break;
+            case 'user_text':
+              try { if (window.chatWidget && window.chatWidget.addToConversation) { window.chatWidget.addToConversation('user', String(msg.text||'')); } } catch(e) {}
               break;
             case 'tts_interrupt':
               this._bumpActivity();
@@ -564,6 +574,26 @@
     
     // Initialize the application
     new AvatarVoiceChat();
+  </script>
+
+  <!-- Layout manager and Chat widget -->
+  <script src="/ada2-static/js/layout-manager.js"></script>
+  <script src="/ada2-static/js/reader-webrtc.js"></script>
+  <script src="/ada2-static/js/chat-widget.js"></script>
+  <script>
+    // Boot the chat widget and show it on the right side
+    (function(){
+      function boot(){
+        try{ if(window.readerRTC && window.readerRTC.connect){ window.readerRTC.connect(); } }catch(e){}
+        try{ if(!window.chatWidget && window.AIChatWidget){ window.chatWidget = new window.AIChatWidget(); } }catch(e){}
+        try{ if(window.chatWidget && !window.chatWidget.isVisible){ window.chatWidget.show(); } }catch(e){}
+      }
+      if(document.readyState === 'complete' || document.readyState === 'interactive'){
+        setTimeout(boot, 120);
+      }else{
+        document.addEventListener('DOMContentLoaded', function(){ setTimeout(boot, 120); });
+      }
+    })();
   </script>
 </body>
 
