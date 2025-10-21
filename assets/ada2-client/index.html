@@ -99,12 +99,23 @@
 </head>
 
 <body>
-  <div id="avatar-container"></div>
-  
-  <div id="status">🤖 Initializing avatar...</div>
-  
-  <div id="voice-controls">
-    <button id="connect-btn">Connect Voice Chat</button>
+  <div id="avatar-container">
+    <div id="status">🤖 Initializing avatar...</div>
+    <!-- Moved connect control into the avatar area (left side) -->
+    <button id="connect-btn" style="
+      position: absolute;
+      bottom: 24px;
+      left: 24px;
+      padding: 10px 16px;
+      font-size: 14px;
+      border: none;
+      border-radius: 18px;
+      background: linear-gradient(45deg, #667eea, #764ba2);
+      color: white;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+      z-index: 110;
+    ">Connect Voice Chat</button>
   </div>
   
   <!-- Main application script -->
@@ -365,14 +376,16 @@
       getSubtitlesBox() {
         let el = document.getElementById('subtitles');
         if (!el) {
+          const parent = document.getElementById('avatar-container') || document.body;
           el = document.createElement('div');
           el.id = 'subtitles';
-          el.style.cssText = [
-            'position:fixed',
+          // Anchor inside avatar container so it always centers over the face area
+          const css = [
+            (parent.id === 'avatar-container' ? 'position:absolute' : 'position:fixed'),
             'bottom:80px',
             'left:50%',
             'transform:translateX(-50%)',
-            'max-width:80vw',
+            'max-width:calc(100% - 80px)',
             'padding:8px 12px',
             'background:rgba(0,0,0,0.6)',
             'border-radius:10px',
@@ -388,7 +401,8 @@
             '-webkit-line-clamp:3',
             '-webkit-box-orient: vertical'
           ].join(';');
-          document.body.appendChild(el);
+          el.style.cssText = css;
+          parent.appendChild(el);
         }
         return el;
       }
