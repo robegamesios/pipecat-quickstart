@@ -52,27 +52,20 @@
     }
     
     #connect-btn {
-      padding: 15px 30px;
-      font-size: 16px;
+      padding: 10px 14px;
+      font-size: 14px;
       border: none;
-      border-radius: 25px;
+      border-radius: 8px;
       background: linear-gradient(45deg, #667eea, #764ba2);
-      color: white;
+      color: #fff;
       cursor: pointer;
-      transition: all 0.3s ease;
-      box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+      transition: background 0.2s ease, transform 0.1s ease, box-shadow 0.2s ease;
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.30);
     }
     
-    #connect-btn:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
-    }
+    #connect-btn:hover { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(102, 126, 234, 0.40); }
     
-    #connect-btn:disabled {
-      background: #555;
-      cursor: not-allowed;
-      transform: none;
-    }
+    #connect-btn:disabled { background: #555; cursor: not-allowed; transform: none; }
     
     #status {
       position: fixed;
@@ -105,15 +98,15 @@
     <button id="connect-btn" style="
       position: absolute;
       bottom: 24px;
-      left: 24px;
-      padding: 10px 16px;
+      left: 20px;
+      padding: 10px 14px;
       font-size: 14px;
       border: none;
-      border-radius: 18px;
+      border-radius: 8px;
       background: linear-gradient(45deg, #667eea, #764ba2);
-      color: white;
+      color: #fff;
       cursor: pointer;
-      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+      box-shadow: 0 4px 12px rgba(102,126,234,0.30);
       z-index: 110;
     ">Connect Voice Chat</button>
   </div>
