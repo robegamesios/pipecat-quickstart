@@ -357,6 +357,17 @@
           }catch(_){ return null; }
         })();
 
+        // Collect recent chat history (user/assistant turns only) to seed session
+        const history = (() => {
+          try{
+            const cw = window.chatWidget;
+            if (!cw || !Array.isArray(cw.conversationHistory)) return [];
+            return cw.conversationHistory
+              .filter(m => m && (m.role === 'user' || m.role === 'assistant'))
+              .map(m => ({ role: m.role, content: String(m.content || '') }));
+          }catch(_){ return []; }
+        })();
+
         const response = await fetch('/api/offer', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -364,7 +375,8 @@
             type: 'offer',
             sdp: offer.sdp,
             client_id: clientId,
-            mode: 'chat'
+            mode: 'chat',
+            history
           })
         });
         

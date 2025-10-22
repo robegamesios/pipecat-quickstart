@@ -442,6 +442,7 @@ def create_app(ada2_client_path: str) -> FastAPI:
         pc_id = request.get("pc_id")
         mode = str(request.get("mode") or "chat").lower().strip()
         client_id = request.get("client_id")
+        history = request.get("history") or []
 
         if pc_id and pc_id in pcs_map:
             connection = pcs_map[pc_id]
@@ -458,6 +459,25 @@ def create_app(ada2_client_path: str) -> FastAPI:
 
             # Import local bot and start it as a background task
             import bot as bot_module
+            # If client provided history, seed it so the new session restores context immediately
+            try:
+                if client_id and isinstance(history, list):
+                    from modules.session_store import set_history
+
+                    # Only accept user/assistant roles
+                    safe_hist = []
+                    for m in history:
+                        try:
+                            role = str(m.get("role",""))
+                            content = str(m.get("content",""))
+                            if role in ("user","assistant"):
+                                safe_hist.append({"role": role, "content": content})
+                        except Exception:
+                            continue
+                    if safe_hist:
+                        set_history(client_id, safe_hist)
+            except Exception as e:
+                logger.warning("Unable to seed history: %s", e)
 
             runner_args = SmallWebRTCRunnerArguments(webrtc_connection=connection)
             # Set mode for bot (chat/reader)
