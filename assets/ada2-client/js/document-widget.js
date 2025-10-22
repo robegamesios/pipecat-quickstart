@@ -972,10 +972,17 @@ class DocumentWidget {
             // Clean up text highlighting
             this.textHighlighter.reset();
 
-            // Notify widget manager
-            if (window.widgetManager) {
-                window.widgetManager.widgetClosed('document');
-            }
+            // Notify widget manager and return to chat mode by default
+            try {
+                if (window.widgetManager) {
+                    window.widgetManager.widgetClosed('document');
+                    if (window.chatWidget && !window.chatWidget.isVisible) {
+                        window.widgetManager.showWidget('chat', () => window.chatWidget.show());
+                    }
+                } else if (window.chatWidget && !window.chatWidget.isVisible) {
+                    window.chatWidget.show();
+                }
+            } catch(_) {}
             try { const sub = document.getElementById('subtitles'); if(sub){ sub.style.left = '50%'; } } catch(_){ }
         }
     }
