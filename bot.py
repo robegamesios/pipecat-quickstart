@@ -50,6 +50,7 @@ from modules.tool_logger import ToolUsageLogger
 from modules.sentence_tts import SentenceTTSPipeline
 from modules.tts_bridge import register_speaker, unregister_speaker
 from modules.chat_bridge import register_sender, unregister_sender
+from modules.interrupt_bridge import register_interrupter, unregister_interrupter
 from modules.user_transcript_logger import UserTranscriptLogger
 from pipecat.audio.vad.vad_analyzer import VADParams
 
@@ -158,6 +159,14 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
                 await task.queue_frames([LLMRunFrame()])
 
             register_sender(str(pc_id), _send)
+
+            # Register an interrupter that injects an InterruptionFrame into this session's pipeline
+            from pipecat.frames.frames import InterruptionFrame
+
+            async def _interrupt():
+                await task.queue_frames([InterruptionFrame()])
+
+            register_interrupter(str(pc_id), _interrupt)
         except Exception:
             pass
         # Kick off the conversation only in chat mode
@@ -175,6 +184,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
             )
             unregister_speaker(str(pc_id))
             unregister_sender(str(pc_id))
+            unregister_interrupter(str(pc_id))
         except Exception:
             pass
         await task.cancel()

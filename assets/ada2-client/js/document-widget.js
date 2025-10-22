@@ -144,6 +144,11 @@ class DocumentWidget {
                            border-radius: 3px; cursor: pointer; font-size: 11px; font-weight: bold;">
                 ▶ Read
             </button>
+            <button id="header-stop-btn" onclick="window.documentWidget.stopReading()" 
+                    style="background: #E53935; color: white; border: none; padding: 4px 8px; 
+                           border-radius: 3px; cursor: pointer; font-size: 11px; font-weight: bold;">
+                ⏹ Stop
+            </button>
             <button id="header-reset-btn" onclick="window.documentWidget.resetReading()" 
                     style="background: #607D8B; color: white; border: none; padding: 4px 8px; 
                            border-radius: 3px; cursor: pointer; font-size: 11px;">
@@ -1158,8 +1163,16 @@ class DocumentWidget {
      * Stop reading utility to match ADA2 API expectations
      */
     stopReading() {
-        try { if (window.stopTalking) { window.stopTalking(); } } catch (_) {}
-        try { this.stopTTSPlayback(); } catch (_) {}
+        // Server interrupt to stop the active TTS/lipsync stream
+        try {
+            const pc_id = (window.readerRTC && window.readerRTC.pc_id) || undefined;
+            fetch('/api/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ pc_id })
+            }).catch(() => {});
+        } catch (_) {}
+        // Update local UI only; the client will receive tts_interrupt and halt avatar speech
         this.isReading = false;
         this.updateReadingStatus('Stopped');
         this.updateReadingButtons();
@@ -1286,19 +1299,22 @@ class DocumentWidget {
      */
     updateReadingButtons() {
         const readBtn = this.widget?.querySelector('#header-read-btn');
+        const stopBtn = this.widget?.querySelector('#header-stop-btn');
         const resetBtn = this.widget?.querySelector('#header-reset-btn');
         const statusElement = this.widget?.querySelector('#header-reading-status');
 
-        if (!readBtn || !resetBtn) {
+        if (!readBtn || !resetBtn || !stopBtn) {
             return;
         }
 
         if (this.isReading) {
-            // Currently reading - disable reset, change read to indicate reading
+            // Reading: enable stop, disable read/reset
             readBtn.innerHTML = '🔊 Reading...';
             readBtn.disabled = true;
             readBtn.style.opacity = '0.6';
             readBtn.style.background = '#9E9E9E';
+            stopBtn.disabled = false;
+            stopBtn.style.opacity = '1';
             resetBtn.disabled = true;
             resetBtn.style.opacity = '0.5';
             if (statusElement) {
@@ -1306,11 +1322,13 @@ class DocumentWidget {
                 statusElement.style.color = '#4CAF50';
             }
         } else {
-            // Not reading - enable all buttons
+            // Idle: enable read/reset, disable stop
             readBtn.innerHTML = '▶ Read';
             readBtn.disabled = false;
             readBtn.style.opacity = '1';
             readBtn.style.background = '#4CAF50';
+            stopBtn.disabled = true;
+            stopBtn.style.opacity = '0.5';
             resetBtn.disabled = false;
             resetBtn.style.opacity = '1';
             if (statusElement) {

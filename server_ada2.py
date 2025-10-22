@@ -211,7 +211,7 @@ def create_app(ada2_client_path: str) -> FastAPI:
                 "        case 'assistant_full_text': try{ if(window.chatWidget && window.chatWidget.addToConversation){ window.chatWidget.addToConversation('assistant', String(msg.text||'')); } }catch(e){} break;\n"
                 "        case 'user_text': try{ if(window.chatWidget && window.chatWidget.addToConversation){ window.chatWidget.addToConversation('user', String(msg.text||'')); } }catch(e){} break;\n"
                 "        case 'tts_interrupt':\n"
-                "          console.log('[Ada2DC] tts_interrupt'); try{ window.__ttsBuf = {}; window.__ttsMeta = {}; if(window.__TH_AVATAR__ && window.__TH_AVATAR__.stopSpeaking){ window.__TH_AVATAR__.stopSpeaking(); } }catch(e){} holdLabel('User'); break;\n"
+                "          console.log('[Ada2DC] tts_interrupt'); try{ window.__ttsBuf = {}; window.__ttsMeta = {}; if(window.__TH_AVATAR__ && window.__TH_AVATAR__.stopSpeaking){ window.__TH_AVATAR__.stopSpeaking(); } }catch(e){} /* no overlay/status change on interrupt */ break;\n"
                 "        case 'log_tool':\n"
                 "          try{ const phase = (msg.phase||''); if(phase==='llm_only'){ /* ignore: no Local LLM display */ break; } const name = (msg.name||''); let label='Tool'; if(name==='google_search'){ label='Google Search'; } else if(name==='get_current_weather'){ label='Weather Search'; } if (phase === 'start') {__toolActive=true; holdLabel(label); } else if (phase === 'end') {__toolActive = false; releaseLabel(); }}catch(e){}\n"
                 "          break;\n"
@@ -410,6 +410,28 @@ def create_app(ada2_client_path: str) -> FastAPI:
             return {"success": True}
         except Exception as e:
             logger.error("/api/chat/send: error=%s", e)
+            return {"success": False, "message": str(e)}
+
+    @app.post("/api/stop")
+    async def api_stop(request: dict):
+        """Interrupt the active LLM/TTS pipeline for a session.
+
+        Body: { "pc_id": "optional" }
+        """
+        try:
+            pc_id = request.get("pc_id")
+            try:
+                from modules.interrupt_bridge import get_interrupter
+
+                intr = get_interrupter(pc_id)
+                if intr:
+                    await intr()
+                    return {"success": True}
+            except Exception as _e:
+                logger.warning("/api/stop interrupter not found: %s", _e)
+            return {"success": False, "message": "No active session"}
+        except Exception as e:
+            logger.error("/api/stop: error=%s", e)
             return {"success": False, "message": str(e)}
 
     # Manage active peer connections by pc_id
