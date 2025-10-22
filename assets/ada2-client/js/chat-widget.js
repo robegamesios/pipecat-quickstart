@@ -94,7 +94,13 @@ class AIChatWidget {
               ">Web View</button>
             </div>
           </div>
-          <button id="chatgpt-close-btn" style="background: none; border: none; color: #888; font-size: 18px; cursor: pointer; padding: 5px; margin-left: auto; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; border-radius: 4px; transition: all 0.2s ease;">✕</button>
+          <div style="display:flex; align-items:center; gap:8px; margin-left:auto;">
+            <button id="new-session-btn" title="Start a new session" style="
+              background: #444; color: #fff; border: none; padding: 6px 10px; border-radius: 4px; cursor: pointer; font-size: 12px;">
+              New Session
+            </button>
+            <button id="chatgpt-close-btn" style="background: none; border: none; color: #888; font-size: 18px; cursor: pointer; padding: 5px; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; border-radius: 4px; transition: all 0.2s ease;">✕</button>
+          </div>
         </div>
 
         <!-- Conversation History - This should expand to fill space -->
@@ -236,6 +242,12 @@ class AIChatWidget {
       closeBtn.style.color = '#888';
     });
 
+    // New Session button
+    const newSessionBtn = this.container.querySelector('#new-session-btn');
+    if (newSessionBtn) {
+      newSessionBtn.addEventListener('click', () => this.startNewSession());
+    }
+
     // Model selector
     const modelSelector = this.container.querySelector('#model-selector');
     modelSelector.addEventListener('change', (e) => {
@@ -357,8 +369,7 @@ class AIChatWidget {
     // If voice chat is not connected yet, clicking the mic should connect.
     const av = window.avatarVoiceChat;
     if (!av || !av.isConnected) {
-      // Not connected: mic is mute-only control, do nothing
-      this.updateMicButtonState();
+      try { if (av && typeof av.connect === 'function') { av.connect(); } } catch(_) {}
       return;
     }
     // Sync local state with avatar, then toggle
@@ -399,28 +410,22 @@ class AIChatWidget {
     const av = window.avatarVoiceChat;
     const connected = !!(av && av.isConnected);
     if (!connected) {
-      this.micBtn.disabled = true;
-      this.micBtn.style.opacity = '0.6';
+      // Not connected: button acts as Connect
+      this.micBtn.disabled = false;
+      this.micBtn.style.opacity = '1';
       this.micBtn.style.background = '#333';
-      this.micBtn.style.color = '#aaa';
-      this.micBtn.textContent = '🎙️';
-      this.micBtn.title = 'Connect voice chat to toggle the microphone';
+      this.micBtn.style.color = '#fff';
+      this.micBtn.textContent = '🎤';
+      this.micBtn.title = 'Click to connect voice chat';
       return;
     }
-    try { this.micMuted = !!av.isMicMuted; } catch(_) {}
     this.micBtn.disabled = false;
     this.micBtn.style.opacity = '1';
-    if (this.micMuted) {
-      this.micBtn.style.background = '#ffbc42';
-      this.micBtn.style.color = '#000';
-      this.micBtn.textContent = '🔇';
-      this.micBtn.title = 'Microphone muted – click to unmute';
-    } else {
-      this.micBtn.style.background = '#00d4aa';
-      this.micBtn.style.color = '#000';
-      this.micBtn.textContent = '🎤';
-      this.micBtn.title = 'Microphone active – click to mute';
-    }
+    // Connected: show active state; button disconnects on click
+    this.micBtn.style.background = '#00d4aa';
+    this.micBtn.style.color = '#000';
+    this.micBtn.textContent = '🎤';
+    this.micBtn.title = 'Connected – click to disconnect voice chat';
   }
 
   showLocalWebViewMessage() {
@@ -1539,6 +1544,19 @@ class AIChatWidget {
     this.conversationHistory = [];
     this.lastAssistantText = '';
     this.updateConversationDisplay();
+  }
+
+  async startNewSession() {
+    try {
+      const clientId = (() => {
+        try { return localStorage.getItem('ada2_client_id'); } catch(_) { return null; } })();
+      await fetch('/api/session/clear', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ client_id: clientId })
+      });
+    } catch(_) {}
+    this.clearConversation();
+    this.addToConversation('system', '🆕 Started a new session');
   }
 
   speakResponse(text) {

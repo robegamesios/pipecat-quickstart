@@ -95,20 +95,7 @@
   <div id="avatar-container">
     <div id="status">🤖 Initializing avatar...</div>
     <!-- Moved connect control into the avatar area (left side) -->
-    <button id="connect-btn" style="
-      position: absolute;
-      bottom: 24px;
-      left: 20px;
-      padding: 10px 14px;
-      font-size: 14px;
-      border: none;
-      border-radius: 8px;
-      background: linear-gradient(45deg, #667eea, #764ba2);
-      color: #fff;
-      cursor: pointer;
-      box-shadow: 0 4px 12px rgba(102,126,234,0.30);
-      z-index: 110;
-    ">Connect Voice Chat</button>
+    <button id="connect-btn" style="display:none; position: absolute; bottom: 24px; left: 20px; padding: 10px 14px; font-size: 14px; border: none; border-radius: 8px; background: linear-gradient(45deg, #667eea, #764ba2); color: #fff; cursor: pointer; box-shadow: 0 4px 12px rgba(102,126,234,0.30); z-index: 110;">Connect Voice Chat</button>
   </div>
   
   <!-- Main application script -->
@@ -122,6 +109,7 @@
         this.localStream = null;
         this.isConnected = false;
         this.isSpeaking = false;
+        this.isMicMuted = false;
         this.toolActive = false;
         this.connectedLabel = '✅ Connected to Voice Chat';
         this.isUserTalking = false;
@@ -330,6 +318,7 @@
             this.updateStatus(this.connectedLabel);
             // Ensure we don't have a competing reader connection
             try { if (window.readerRTC && window.readerRTC.isConnected()) { window.readerRTC.disconnect(); } } catch(e) {}
+            try { window.dispatchEvent(new CustomEvent('ada2:voice-connected', { detail: { muted: !!this.isMicMuted } })); } catch(_) {}
           } else if (state === 'failed' || state === 'disconnected') {
             this.handleDisconnection();
           }
@@ -594,6 +583,19 @@
         this.updateStatus('🤖 Voice chat disconnected');
         // Re-establish lightweight reader channel so chat widget works without voice
         try { if (window.readerRTC && typeof window.readerRTC.connect === 'function') { window.readerRTC.connect(); } } catch(_) {}
+        try { window.dispatchEvent(new CustomEvent('ada2:voice-disconnected')); } catch(_) {}
+      }
+
+      toggleMicMuted() {
+        if (!this.isConnected || !this.localStream) return;
+        try {
+          const tracks = this.localStream.getAudioTracks();
+          if (tracks && tracks[0]) {
+            this.isMicMuted = !this.isMicMuted;
+            tracks[0].enabled = !this.isMicMuted;
+            try { window.dispatchEvent(new CustomEvent('ada2:mic-muted', { detail: { muted: this.isMicMuted } })); } catch(_) {}
+          }
+        } catch (_) {}
       }
       
       updateStatus(message) {
@@ -604,8 +606,9 @@
       }
     }
     
-    // Initialize the application
-    new AvatarVoiceChat();
+    // Initialize the application and expose globally for chat widget mic control
+    const __avc = new AvatarVoiceChat();
+    try { window.avatarVoiceChat = __avc; } catch(_) {}
   </script>
 
   <!-- Layout manager and Chat widget -->

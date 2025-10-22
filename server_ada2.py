@@ -434,6 +434,21 @@ def create_app(ada2_client_path: str) -> FastAPI:
             logger.error("/api/stop: error=%s", e)
             return {"success": False, "message": str(e)}
 
+    @app.post("/api/session/clear")
+    async def api_session_clear(request: dict):
+        try:
+            client_id = request.get("client_id")
+            if client_id:
+                try:
+                    from modules.session_store import set_history
+                    set_history(client_id, [])
+                except Exception:
+                    pass
+            return {"success": True}
+        except Exception as e:
+            logger.error("/api/session/clear: error=%s", e)
+            return {"success": False, "message": str(e)}
+
     # Manage active peer connections by pc_id
     pcs_map: Dict[str, SmallWebRTCConnection] = {}
 
