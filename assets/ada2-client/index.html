@@ -569,6 +569,8 @@
         this.connectBtn.disabled = false;
         this.avatar?.stopSpeaking();
         this.updateStatus('🤖 Voice chat disconnected');
+        // Re-establish lightweight reader channel so chat widget works without voice
+        try { if (window.readerRTC && typeof window.readerRTC.connect === 'function') { window.readerRTC.connect(); } } catch(_) {}
       }
       
       updateStatus(message) {
