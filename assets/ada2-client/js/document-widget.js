@@ -136,25 +136,20 @@ class DocumentWidget {
         // Create controls container for reading controls (hidden by default)
         const controlsContainer = document.createElement('div');
         controlsContainer.id = 'header-reading-controls';
-        controlsContainer.style.cssText = 'display: none; align-items: center; gap: 6px; margin-right: 12px;';
+        controlsContainer.style.cssText = 'display: none; align-items: center; gap: 6px; margin-left: auto; margin-right: 12px;';
         controlsContainer.innerHTML = `
-            <div id="header-reading-status" style="font-size: 10px; color: #ccc;">Ready</div>
-            <button id="header-read-btn" onclick="window.documentWidget.startReading()" 
-                    style="background: #4CAF50; color: white; border: none; padding: 4px 8px; 
-                           border-radius: 3px; cursor: pointer; font-size: 11px; font-weight: bold;">
-                ▶ Read
-            </button>
-            <button id="header-stop-btn" onclick="window.documentWidget.stopReading()" 
-                    style="background: #E53935; color: white; border: none; padding: 4px 8px; 
-                           border-radius: 3px; cursor: pointer; font-size: 11px; font-weight: bold;">
-                ⏹ Stop
-            </button>
-            <button id="header-reset-btn" onclick="window.documentWidget.resetReading()" 
-                    style="background: #607D8B; color: white; border: none; padding: 4px 8px; 
-                           border-radius: 3px; cursor: pointer; font-size: 11px;">
-                🔄 Reset
-            </button>
-            <div id="header-bookmark-status" style="font-size: 9px; color: #999;">📍 0%</div>
+            <div id="header-read-controls" style="display: flex; align-items: center; gap: 6px;">
+                <button id="header-read-btn" onclick="window.documentWidget.startReading()" 
+                        style="background: #4CAF50; color: white; border: none; padding: 4px 8px; 
+                               border-radius: 3px; cursor: pointer; font-size: 11px; font-weight: bold;">▶ Read</button>
+                <button id="header-stop-btn" onclick="window.documentWidget.stopReading()" 
+                        style="background: #E53935; color: white; border: none; padding: 4px 8px; 
+                               border-radius: 3px; cursor: pointer; font-size: 11px; font-weight: bold;">⏹ Stop</button>
+                <button id="header-reset-btn" onclick="window.documentWidget.resetReading()" 
+                        style="background: #607D8B; color: white; border: none; padding: 4px 8px; 
+                               border-radius: 3px; cursor: pointer; font-size: 11px;">🔄 Reset</button>
+            </div>
+            <div id="header-bookmark-status" style="font-size: 9px; color: #999; margin-left: 6px;">📍 0%</div>
         `;
 
         // Create section indicator (hidden by default)
@@ -162,10 +157,17 @@ class DocumentWidget {
         sectionIndicator.id = 'header-section-indicator';
         sectionIndicator.style.cssText = 'color: #aaa; font-size: 13px; display: none; margin-left: 10px;';
 
+        // Status label (left side, next to title and section)
+        const statusEl = document.createElement('div');
+        statusEl.id = 'header-reading-status';
+        statusEl.style.cssText = 'font-size: 10px; color: #ccc; margin-left: 8px;';
+        statusEl.textContent = 'Ready';
+
         // Append elements to header
         header.appendChild(backButton);
         header.appendChild(title);
         header.appendChild(sectionIndicator);
+        header.appendChild(statusEl);
         header.appendChild(controlsContainer);
         header.appendChild(closeButton);
 
@@ -1099,7 +1101,7 @@ class DocumentWidget {
     /**
      * Start reading the current chapter
      */
-    async startReading() {
+      async startReading() {
         if (!this.currentSection) {
             console.warn('No section loaded');
             return;
@@ -1118,6 +1120,15 @@ class DocumentWidget {
         this.updateReadingStatus('Reading...');
 
         this.isReading = true;
+        // Show 'Reading: <chapter>' beside the title
+        try {
+          const statusEl = this.widget?.querySelector('#header-reading-status');
+          if (statusEl) {
+            const chapterLabel = (this.currentSection && (this.currentSection.title || `Section ${this.currentSection.order}`)) || 'Section';
+            statusEl.textContent = `Reading: ${chapterLabel}`;
+            statusEl.style.color = '#4CAF50';
+          }
+        } catch(_){}
         this.updateReadingButtons();
 
         // Use Kokoro TTS via global window.kokoroSpeak (server injects kokoro-bootstrap)
@@ -1317,10 +1328,7 @@ class DocumentWidget {
             stopBtn.style.opacity = '1';
             resetBtn.disabled = true;
             resetBtn.style.opacity = '0.5';
-            if (statusElement) {
-                statusElement.textContent = 'Reading...';
-                statusElement.style.color = '#4CAF50';
-            }
+            // Keep current status text (set when starting reading)
         } else {
             // Idle: enable read/reset, disable stop
             readBtn.innerHTML = '▶ Read';
