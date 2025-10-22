@@ -441,6 +441,7 @@ def create_app(ada2_client_path: str) -> FastAPI:
     async def offer(request: dict, background_tasks: BackgroundTasks):
         pc_id = request.get("pc_id")
         mode = str(request.get("mode") or "chat").lower().strip()
+        client_id = request.get("client_id")
 
         if pc_id and pc_id in pcs_map:
             connection = pcs_map[pc_id]
@@ -462,6 +463,10 @@ def create_app(ada2_client_path: str) -> FastAPI:
             # Set mode for bot (chat/reader)
             try:
                 setattr(bot_module, "BOT_MODE", mode)
+            except Exception:
+                pass
+            try:
+                setattr(bot_module, "CLIENT_ID", client_id)
             except Exception:
                 pass
             background_tasks.add_task(bot_module.bot, runner_args)

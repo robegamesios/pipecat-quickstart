@@ -348,12 +348,23 @@
         await this.peerConnection.setLocalDescription(offer);
         
         // Send offer to pipecat server
+        // Stable client id for restoring history
+        const clientId = (() => {
+          try{
+            let id = localStorage.getItem('ada2_client_id');
+            if(!id){ id = 'c-' + Math.random().toString(36).slice(2); localStorage.setItem('ada2_client_id', id); }
+            return id;
+          }catch(_){ return null; }
+        })();
+
         const response = await fetch('/api/offer', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ 
             type: 'offer',
-            sdp: offer.sdp 
+            sdp: offer.sdp,
+            client_id: clientId,
+            mode: 'chat'
           })
         });
         

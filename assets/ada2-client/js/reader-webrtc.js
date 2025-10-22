@@ -43,9 +43,18 @@
         };
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
+        // Stable client id shared with voice chat
+        const clientId = (() => {
+          try{
+            let id = localStorage.getItem('ada2_client_id');
+            if(!id){ id = 'c-' + Math.random().toString(36).slice(2); localStorage.setItem('ada2_client_id', id); }
+            return id;
+          }catch(_){ return null; }
+        })();
+
         const resp = await fetch('/api/offer', {
           method:'POST', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({ type:'offer', sdp: offer.sdp, mode: 'reader' })
+          body: JSON.stringify({ type:'offer', sdp: offer.sdp, mode: 'reader', client_id: clientId })
         });
         const answer = await resp.json();
         if (!answer || !answer.sdp) throw new Error('No SDP answer');

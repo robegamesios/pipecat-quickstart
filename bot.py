@@ -53,11 +53,14 @@ from modules.chat_bridge import register_sender, unregister_sender
 from modules.interrupt_bridge import register_interrupter, unregister_interrupter
 from modules.user_transcript_logger import UserTranscriptLogger
 from pipecat.audio.vad.vad_analyzer import VADParams
+from modules.session_store import get_history, set_history
 
 load_dotenv(override=True)
 
 # Global mode; 'chat' or 'reader'
 BOT_MODE = os.getenv("PIPELINE_MODE", "chat").strip().lower()
+# Stable client identity (set by server per /api/offer)
+CLIENT_ID = None
 
 
 async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
@@ -70,7 +73,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     register_book_tools(llm)
 
     # Prompt for gpt-4o, gpt-4o-mini
-    messages: List[ChatCompletionMessageParam] = [
+    base_messages: List[ChatCompletionMessageParam] = [
         {
             "role": "system",
             "content": (
@@ -95,6 +98,20 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
             ),
         },
     ]
+
+    # Restore conversation history for this client if available
+    hist = []
+    try:
+        hist = get_history(globals().get("CLIENT_ID"))
+    except Exception:
+        hist = []
+
+    messages: List[ChatCompletionMessageParam] = list(base_messages)
+    if hist:
+        for m in hist:
+            r = str(m.get("role", ""))
+            if r in ("user", "assistant"):
+                messages.append({"role": r, "content": str(m.get("content", ""))})
 
     # Provide tools to the context so the model may call them.
     context = OpenAILLMContext(messages, tools=create_all_tools(), tool_choice="auto")
@@ -131,6 +148,9 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
         ),
         observers=[RTVIObserver(rtvi)],
     )
+
+    # Track whether we restored prior history
+    had_history = bool(hist)
 
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
@@ -169,8 +189,8 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
             register_interrupter(str(pc_id), _interrupt)
         except Exception:
             pass
-        # Kick off the conversation only in chat mode
-        if BOT_MODE != "reader":
+        # Kick off a greeting only when starting fresh in chat mode
+        if BOT_MODE != "reader" and not had_history:
             messages.append({"role": "system", "content": "Say Hello, I'm ADA. How can I assist you today?"})
             await task.queue_frames([LLMRunFrame()])
 
@@ -185,6 +205,14 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
             unregister_speaker(str(pc_id))
             unregister_sender(str(pc_id))
             unregister_interrupter(str(pc_id))
+            # Persist user/assistant turns for this client
+            try:
+                cid = globals().get("CLIENT_ID")
+                if cid:
+                    turns = [m for m in messages if m.get("role") in ("user", "assistant")]
+                    set_history(cid, turns)
+            except Exception:
+                pass
         except Exception:
             pass
         await task.cancel()
