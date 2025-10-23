@@ -25,6 +25,8 @@ class AIChatWidget {
     this.defaultPlaceholder = 'Type your question...';
     this.lastAssistantText = '';
     this.awaitingAssistant = false;
+    this.turnPairs = 0;
+    this.turnLimit = 60;
     
     this.createWidget();
   }
@@ -173,6 +175,7 @@ class AIChatWidget {
 
         <!-- Send Query at Bottom - Fixed -->
         <div style="flex-shrink: 0; margin-top: 10px; margin-bottom: 0;">
+          <div id="turn-counter" style="color:#999; font-size: 11px; margin: 0 0 6px 2px;">0/60</div>
           <div style="display: flex; gap: 10px; align-items: center;">
             <input id="chatgpt-query-input" type="text" placeholder="Type your question..." style="
               flex: 1;
@@ -394,6 +397,9 @@ class AIChatWidget {
     this.micAvailable = false;
     this.micMuted = false;
     this.updateMicButtonState();
+    // Reset counter when a session fully disconnects
+    this.turnPairs = 0;
+    this.updateTurnCounter();
   }
 
   onMicMuted(event) {
@@ -1460,6 +1466,10 @@ class AIChatWidget {
       this.lastAssistantText = normalized;
       this.awaitingAssistant = false;
       this.updateConversationDisplay();
+      // Count one turn (user+assistant) per assistant reply
+      this.turnPairs = Math.max(0, (this.turnPairs || 0)) + 1;
+      this.updateTurnCounter();
+      this.syncSessionIfNeeded();
       return;
     }
     if (role === 'user') {
@@ -1471,6 +1481,7 @@ class AIChatWidget {
         timestamp: Date.now(),
       });
       this.updateConversationDisplay();
+      this.updateTurnCounter();
       return;
     }
     this.conversationHistory.push({
@@ -1479,6 +1490,28 @@ class AIChatWidget {
       timestamp: Date.now(),
     });
     this.updateConversationDisplay();
+    this.updateTurnCounter();
+  }
+
+  // Auto-compact via server when the counter reaches the limit
+  async syncSessionIfNeeded() {
+    try {
+      const cap = Math.max(1, this.turnLimit || 60);
+      const val = Math.max(0, this.turnPairs || 0);
+      if (val < cap) return;
+      // Build sanitized user/assistant turns list
+      const turns = (this.conversationHistory || [])
+        .filter(m => m && (m.role === 'user' || m.role === 'assistant'))
+        .map(m => ({ role: m.role, content: String(m.content || '') }));
+      const clientId = (() => { try { return localStorage.getItem('ada2_client_id'); } catch(_) { return null; } })();
+      await fetch('/api/session/sync', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ client_id: clientId, turns })
+      }).catch(()=>{});
+      // Reset counter after compaction
+      this.turnPairs = 0;
+      this.updateTurnCounter();
+    } catch(_) {}
   }
 
   updateConversationDisplay() {
@@ -1554,6 +1587,8 @@ class AIChatWidget {
     this.conversationHistory = [];
     this.lastAssistantText = '';
     this.updateConversationDisplay();
+    this.turnPairs = 0;
+    this.updateTurnCounter();
   }
 
   async startNewSession() {
@@ -1567,6 +1602,16 @@ class AIChatWidget {
     } catch(_) {}
     this.clearConversation();
     this.addToConversation('system', '🆕 Started a new session');
+  }
+
+  updateTurnCounter() {
+    try {
+      const el = this.container.querySelector('#turn-counter');
+      if (!el) return;
+      const val = Math.max(0, this.turnPairs || 0);
+      const cap = Math.max(1, this.turnLimit || 60);
+      el.textContent = `${val}/${cap}`;
+    } catch (_) {}
   }
 
   speakResponse(text) {

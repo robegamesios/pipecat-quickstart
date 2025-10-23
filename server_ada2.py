@@ -449,6 +449,39 @@ def create_app(ada2_client_path: str) -> FastAPI:
             logger.error("/api/session/clear: error=%s", e)
             return {"success": False, "message": str(e)}
 
+    @app.post("/api/session/sync")
+    async def api_session_sync(request: dict):
+        """Client-driven session compaction: accepts full user/assistant turns and
+        updates the rolling summary + recent tail in memory.
+
+        Body: { "client_id": str, "turns": [ {"role":"user|assistant", "content":"..."}, ... ] }
+        """
+        try:
+            client_id = request.get("client_id")
+            turns = request.get("turns") or []
+            if not client_id or not isinstance(turns, list):
+                return {"success": False, "message": "Missing client_id or turns"}
+            # Sanitize
+            clean = []
+            for t in turns:
+                try:
+                    r = str(t.get("role", ""))
+                    c = str(t.get("content", ""))
+                    if r in ("user", "assistant"):
+                        clean.append({"role": r, "content": c})
+                except Exception:
+                    continue
+            from modules.session_store import summarize_and_trim, set_session
+
+            summary_now, kept = summarize_and_trim(
+                client_id, clean, keep_last=30, summarize_chunk=30, max_summary_chars=3500
+            )
+            set_session(client_id, summary_now, kept)
+            return {"success": True, "kept": len(kept), "summary_len": len(summary_now)}
+        except Exception as e:
+            logger.error("/api/session/sync: error=%s", e)
+            return {"success": False, "message": str(e)}
+
     # Manage active peer connections by pc_id
     pcs_map: Dict[str, SmallWebRTCConnection] = {}
 

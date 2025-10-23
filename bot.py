@@ -20,7 +20,7 @@ Run the bot using::
 """
 
 import os
-from typing import List
+from typing import List, cast
 
 from dotenv import load_dotenv
 from openai.types.chat import ChatCompletionMessageParam
@@ -53,7 +53,14 @@ from modules.chat_bridge import register_sender, unregister_sender
 from modules.interrupt_bridge import register_interrupter, unregister_interrupter
 from modules.user_transcript_logger import UserTranscriptLogger
 from pipecat.audio.vad.vad_analyzer import VADParams
-from modules.session_store import get_history, set_history
+from modules.session_store import (
+    get_history,
+    set_history,
+    get_session,
+    set_session,
+    summarize_and_trim,
+    was_cleared,
+)
 
 load_dotenv(override=True)
 
@@ -99,19 +106,36 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
         },
     ]
 
-    # Restore conversation history for this client if available
-    hist = []
+    # Restore conversation summary + recent turns for this client if available
+    cid = globals().get("CLIENT_ID")
+    summary, turns = ("", [])
     try:
-        hist = get_history(globals().get("CLIENT_ID"))
+        summary, turns = get_session(cid)
+        if not summary and not turns:
+            legacy = get_history(cid)
+            if legacy:
+                turns = [m for m in legacy if m.get("role") in ("user", "assistant")]
+                set_session(cid, "", turns)
     except Exception:
-        hist = []
+        summary, turns = "", []
 
     messages: List[ChatCompletionMessageParam] = list(base_messages)
-    if hist:
-        for m in hist:
-            r = str(m.get("role", ""))
-            if r in ("user", "assistant"):
-                messages.append({"role": r, "content": str(m.get("content", ""))})
+    if summary:
+        messages.append(
+            cast(
+                ChatCompletionMessageParam,
+                {"role": "system", "content": f"Conversation Summary (for context):\n{summary}"},
+            )
+        )
+    for m in turns:
+        r = str(m.get("role", ""))
+        if r in ("user", "assistant"):
+            messages.append(
+                cast(
+                    ChatCompletionMessageParam,
+                    {"role": r, "content": str(m.get("content", ""))},
+                )
+            )
 
     # Provide tools to the context so the model may call them.
     context = OpenAILLMContext(messages, tools=create_all_tools(), tool_choice="auto")
@@ -150,7 +174,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     )
 
     # Track whether we restored prior history
-    had_history = bool(hist)
+    had_history = bool(summary or turns)
 
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
@@ -205,12 +229,21 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
             unregister_speaker(str(pc_id))
             unregister_sender(str(pc_id))
             unregister_interrupter(str(pc_id))
-            # Persist user/assistant turns for this client
+            # Persist user/assistant turns + summarize oldest unless cleared
             try:
                 cid = globals().get("CLIENT_ID")
-                if cid:
-                    turns = [m for m in messages if m.get("role") in ("user", "assistant")]
-                    set_history(cid, turns)
+                if cid and not was_cleared(cid):
+                    # Convert to simple role/content dicts for summarization
+                    all_turns = [
+                        {
+                            "role": str(m.get("role", "")),
+                            "content": str(m.get("content", "")),
+                        }
+                        for m in messages
+                        if m.get("role") in ("user", "assistant")
+                    ]
+                    summary_now, kept = summarize_and_trim(cid, all_turns, keep_last=30, summarize_chunk=30, max_summary_chars=3500)
+                    set_session(cid, summary_now, kept)
             except Exception:
                 pass
         except Exception:
