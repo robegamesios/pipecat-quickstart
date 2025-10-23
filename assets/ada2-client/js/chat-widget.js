@@ -419,13 +419,23 @@ class AIChatWidget {
       this.micBtn.title = 'Click to connect voice chat';
       return;
     }
+    // Connected: color reflects mute state
+    try { this.micMuted = !!av.isMicMuted; } catch(_) {}
     this.micBtn.disabled = false;
     this.micBtn.style.opacity = '1';
-    // Connected: show active state; button disconnects on click
-    this.micBtn.style.background = '#00d4aa';
-    this.micBtn.style.color = '#000';
-    this.micBtn.textContent = '🎤';
-    this.micBtn.title = 'Connected – click to disconnect voice chat';
+    if (this.micMuted) {
+      // Muted: amber and mute icon
+      this.micBtn.style.background = '#ffbc42';
+      this.micBtn.style.color = '#000';
+      this.micBtn.textContent = '🔇';
+      this.micBtn.title = 'Microphone muted – click to unmute';
+    } else {
+      // Unmuted: green and mic icon
+      this.micBtn.style.background = '#00d4aa';
+      this.micBtn.style.color = '#000';
+      this.micBtn.textContent = '🎤';
+      this.micBtn.title = 'Microphone active – click to mute';
+    }
   }
 
   showLocalWebViewMessage() {
