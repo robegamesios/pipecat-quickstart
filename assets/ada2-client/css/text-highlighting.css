@@ -19,7 +19,7 @@
 .text-segment.current-reading-text {
     /* No background; emphasize by color only */
     background: none;
-    color: #00e676; /* green accent for current spoken text */
+    color: #00d4aa; /* match Local AI accent */
     font-weight: inherit;
     padding: 0;
     border-radius: 0;
@@ -86,7 +86,7 @@
 
 .chat-response-text .text-segment.current-reading-text {
     background: none;
-    color: #00e676;
+    color: #00d4aa;
     font-weight: inherit;
     padding: 0;
     border-radius: 0;

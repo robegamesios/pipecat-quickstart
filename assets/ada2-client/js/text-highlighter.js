@@ -409,6 +409,12 @@ class TextHighlighter {
      * Reset highlighter state
      */
     reset() {
+        try {
+            // Visually clear any applied classes before dropping references
+            if (this.isInitialized) {
+                this.clearAllHighlights();
+            }
+        } catch(_) {}
         this.stopSubtitleMonitoring();
         this.isInitialized = false;
         this.textSegments = [];

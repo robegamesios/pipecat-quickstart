@@ -441,6 +441,8 @@
               this._scheduleIdleReset();
               box.textContent = (msg.text || '');
               box.style.display = (box.textContent ? '-webkit-box' : 'none');
+              // Clear chat bubble highlighting at the end of a spoken response
+              try { if (window.chatWidget && window.chatWidget.currentTextHighlighter) { window.chatWidget.currentTextHighlighter.reset(); } } catch(e) {}
               break;
             case 'assistant_full_text':
               try { if (window.chatWidget && window.chatWidget.addToConversation) { window.chatWidget.addToConversation('assistant', String(msg.text||'')); } } catch(e) {}
