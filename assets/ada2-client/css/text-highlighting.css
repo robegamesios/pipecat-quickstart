@@ -17,11 +17,14 @@
 
 /* Currently being read - bright highlight with animation */
 .text-segment.current-reading-text {
-    background: #ffd54f; /* solid amber */
+    /* Solid highlight across contiguous spans */
+    background: #ffd54f;
     color: #000;
     font-weight: bold;
-    padding: 2px 1px;
-    border-radius: 3px;
+    padding: 1px 2px;
+    border-radius: 0; /* avoid scalloped edges between adjacent spans */
+    line-height: inherit;
+    background-clip: padding-box;
 }
 
 /* Text that hasn't been read yet - normal styling */
@@ -83,12 +86,14 @@
 }
 
 .chat-response-text .text-segment.current-reading-text {
-    /* Solid color on dark chat background */
+    /* Solid highlight in chat too */
     background: #ffd54f;
     color: #000;
     font-weight: bold;
-    padding: 2px 1px;
-    border-radius: 3px;
+    padding: 1px 2px;
+    border-radius: 0;
+    line-height: inherit;
+    background-clip: padding-box;
 }
 
 .chat-response-text .text-segment.read-text {
