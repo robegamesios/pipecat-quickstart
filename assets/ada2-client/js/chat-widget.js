@@ -1466,6 +1466,8 @@ class AIChatWidget {
       this.lastAssistantText = normalized;
       this.awaitingAssistant = false;
       this.updateConversationDisplay();
+      // Highlight the currently spoken text in the latest assistant bubble
+      try { this.initializeResponseHighlighting(normalized); } catch(_) {}
       // Count one turn (user+assistant) per assistant reply
       this.turnPairs = Math.max(0, (this.turnPairs || 0)) + 1;
       this.updateTurnCounter();

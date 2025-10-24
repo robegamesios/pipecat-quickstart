@@ -17,14 +17,13 @@
 
 /* Currently being read - bright highlight with animation */
 .text-segment.current-reading-text {
-    /* Solid highlight across contiguous spans */
-    background: #ffd54f;
-    color: #000;
-    font-weight: bold;
-    padding: 1px 2px;
-    border-radius: 0; /* avoid scalloped edges between adjacent spans */
+    /* No background; emphasize by color only */
+    background: none;
+    color: #00e676; /* green accent for current spoken text */
+    font-weight: inherit;
+    padding: 0;
+    border-radius: 0;
     line-height: inherit;
-    background-clip: padding-box;
 }
 
 /* Text that hasn't been read yet - normal styling */
@@ -86,14 +85,12 @@
 }
 
 .chat-response-text .text-segment.current-reading-text {
-    /* Solid highlight in chat too */
-    background: #ffd54f;
-    color: #000;
-    font-weight: bold;
-    padding: 1px 2px;
+    background: none;
+    color: #00e676;
+    font-weight: inherit;
+    padding: 0;
     border-radius: 0;
     line-height: inherit;
-    background-clip: padding-box;
 }
 
 .chat-response-text .text-segment.read-text {
