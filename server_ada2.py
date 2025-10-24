@@ -19,7 +19,7 @@ import os
 from contextlib import asynccontextmanager
 from typing import Dict
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -58,6 +58,17 @@ def create_app(ada2_client_path: str) -> FastAPI:
         app.mount("/ada2-static", StaticFiles(directory=ada2_client_path, html=False), name="ada2_static")
         logger.info(f"Mounted ADA2 static assets at /ada2-static from {ada2_client_path}")
 
+        # Optionally mount an external ADA2 frontend/public tree for exact UI files
+        ada2_ui_public_path = os.getenv("ADA2_UI_PUBLIC_PATH", "").strip()
+        js_base = "/ada2-static"
+        if ada2_ui_public_path and os.path.isdir(ada2_ui_public_path):
+            try:
+                app.mount("/ada2-ext", StaticFiles(directory=ada2_ui_public_path, html=False), name="ada2_ext")
+                js_base = "/ada2-ext"
+                logger.info(f"Mounted external ADA2 UI at /ada2-ext from {ada2_ui_public_path}")
+            except Exception as e:
+                logger.warning(f"Could not mount ADA2_UI_PUBLIC_PATH={ada2_ui_public_path}: {e}")
+
         @app.get("/ada2-injected/lipsync-en.mjs", include_in_schema=False)
         async def lipsync_en_mjs():
             # Serve the module from the project tree by default; allow env override
@@ -82,6 +93,36 @@ def create_app(ada2_client_path: str) -> FastAPI:
             # Ensure relative paths resolve against /ada2-static/
             if "<base" not in html:
                 html = html.replace("<head>", "<head>\n<base href=\"/ada2-static/\">\n")
+
+            # Inject import map for Kokoro dependencies and ADA2 module path if not present
+            if "@huggingface/transformers" not in html:
+                import_map = (
+                    "<script type=\"importmap\">\n"
+                    "{\n"
+                    "  \"imports\": {\n"
+                    "    \"@huggingface/transformers\": \"https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.4.2/dist/transformers.min.js\",\n"
+                    "    \"phonemizer\": \"https://cdn.jsdelivr.net/npm/phonemizer@1.2.1/dist/phonemizer.min.js\",\n"
+                    "    \"/public/js/ui-utils.js\": \"/ada2-static/js/ui-utils.js\"\n"
+                    "  }\n"
+                    "}\n"
+                    "</script>\n"
+                )
+                html = html.replace("<head>", f"<head>\n{import_map}")
+
+            # Inject ADA2 UI assets (prefer external mount if available)
+            head_includes = (
+                f'<link rel="stylesheet" href="{js_base}/css/text-highlighting.css">\n'
+                f'<script src="{js_base}/js/widget-styles.js"></script>\n'
+                f'<script type="module" src="{js_base}/js/ui-utils.js"></script>\n'
+                f'<script src="{js_base}/js/text-highlighter.js"></script>\n'
+                f'<script type="module" src="{js_base}/js/document-utils.js"></script>\n'
+                f'<script src="{js_base}/js/document-widget.js"></script>\n'
+                f'<script src="{js_base}/js/widget-manager.js"></script>\n'
+                f'<script src="/ada2-static/js/reader-webrtc.js"></script>\n'
+                '<script type="module" src="/ada2-static/js/kokoro-bootstrap.mjs"></script>\n'
+            )
+            if "/ada2-static/js/document-widget.js" not in html:
+                html = html.replace("</head>", head_includes + "</head>")
 
             # Try to expose the TalkingHead instance on the ADA2 client
             if "await this.avatar.showAvatar(" in html and "window.__TH_AVATAR__" not in html:
@@ -116,34 +157,23 @@ def create_app(ada2_client_path: str) -> FastAPI:
                 "  // State for lipsync assembly\n"
                 "  window.__ttsBuf = window.__ttsBuf || {};\n"
                 "  window.__ttsMeta = window.__ttsMeta || {};\n"
+                "  function __centerOverAvatar(el){\n"
+                "    try{\n"
+                "      const ac = document.getElementById('avatar-container');\n"
+                "      const r = ac ? ac.getBoundingClientRect() : { left: (window.innerWidth/2-1), width: 2 };\n"
+                "      const cx = r.left + (r.width/2);\n"
+                "      el.style.position = 'fixed';\n"
+                "      el.style.left = (cx)+'px';\n"
+                "      el.style.transform = 'translateX(-50%)';\n"
+                "      el.style.maxWidth = Math.max(200, Math.round(r.width - 80)) + 'px';\n"
+                "      el.style.bottom = '80px';\n"
+                "      el.style.zIndex = 1100;\n"
+                "    }catch(e){}\n"
+                "  }\n"
                 "  function getBox(){\n"
                 "    let el = document.getElementById('subtitles');\n"
-                "    if(!el){\n"
-                "      el = document.createElement('div');\n"
-                "      el.id='subtitles';\n"
-                "      el.style.cssText = [\n"
-                "        'position:fixed',\n"
-                "        'bottom:80px',\n"
-                "        'left:50%',\n"
-                "        'transform:translateX(-50%)',\n"
-                "        'max-width:80vw',\n"
-                "        'padding:8px 12px',\n"
-                "        'background:rgba(0,0,0,0.6)',\n"
-                "        'border-radius:10px',\n"
-                "        'font-size:18px',\n"
-                "        'line-height:1.25',\n"
-                "        'max-height: 3.75em',\n"
-                "        'text-align:center',\n"
-                "        'z-index:200',\n"
-                "        'color:#fff',\n"
-                "        'pointer-events:none',\n"
-                "        'overflow:hidden',\n"
-                "        'display:none',\n"
-                "        '-webkit-line-clamp:3',\n"
-                "        '-webkit-box-orient: vertical'\n"
-                "      ].join(';');\n"
-                "      document.body.appendChild(el);\n"
-                "    }\n"
+                "    if(!el){ el = document.createElement('div'); el.id='subtitles'; el.style.padding='8px 12px'; el.style.background='rgba(0,0,0,0.6)'; el.style.borderRadius='10px'; el.style.fontSize='18px'; el.style.lineHeight='1.25'; el.style.maxHeight='3.75em'; el.style.textAlign='center'; el.style.color='#fff'; el.style.pointerEvents='none'; el.style.overflow='hidden'; el.style.display='none'; el.style.webkitLineClamp=3; el.style.webkitBoxOrient='vertical'; document.body.appendChild(el);}\n"
+                "    __centerOverAvatar(el);\n"
                 "    return el;\n"
                 "  }\n"
                 "  // Try to reuse the existing status label in the ADA2 UI, e.g., 'Avatar Ready' or 'Voice chat connected'.\n"
@@ -175,11 +205,13 @@ def create_app(ada2_client_path: str) -> FastAPI:
                 "      let msg = null; try{ msg = JSON.parse(ev.data); }catch(e){ return; }\n"
                 "      const box = getBox();\n"
                 "      switch(msg && msg.type){\n"
-                "        case 'subtitle_start': /*console.log('[Ada2DC] subtitle_start');*/ box.textContent=''; box.style.display='-webkit-box'; __speakingActive=true; /* no overlay change here to avoid flicker */ break;\n"
-                "        case 'subtitle_delta': /*console.log('[Ada2DC] subtitle_delta', msg.text);*/ box.textContent = (msg.text||''); box.style.display='-webkit-box'; break;\n"
-                "        case 'subtitle_end': /*console.log('[Ada2DC] subtitle_end');*/ box.textContent = (msg.text||''); box.style.display = (box.textContent?'-webkit-box':'none'); __speakingActive=false; releaseLabel(); __toolActive=false; break;\n"
+                "        case 'subtitle_start': /*console.log('[Ada2DC] subtitle_start');*/ __centerOverAvatar(box); box.textContent=''; box.style.display='-webkit-box'; __speakingActive=true; /* no overlay change here to avoid flicker */ break;\n"
+                "        case 'subtitle_delta': /*console.log('[Ada2DC] subtitle_delta', msg.text);*/ __centerOverAvatar(box); box.textContent = (msg.text||''); box.style.display='-webkit-box'; try{ if(window.documentWidget && window.documentWidget.textHighlighter && window.documentWidget.textHighlighter.isInitialized){ setTimeout(()=>{ try{ window.documentWidget.textHighlighter.highlightText(String(msg.text||'')); }catch(e){} }, 50);} }catch(e){} break;\n"
+                "        case 'subtitle_end': /*console.log('[Ada2DC] subtitle_end');*/ __centerOverAvatar(box); box.textContent = (msg.text||''); box.style.display = (box.textContent?'-webkit-box':'none'); __speakingActive=false; releaseLabel(); __toolActive=false; break;\n"
+                "        case 'assistant_full_text': try{ if(window.chatWidget && window.chatWidget.addToConversation){ window.chatWidget.addToConversation('assistant', String(msg.text||'')); } }catch(e){} break;\n"
+                "        case 'user_text': try{ if(window.chatWidget && window.chatWidget.addToConversation){ window.chatWidget.addToConversation('user', String(msg.text||'')); } }catch(e){} break;\n"
                 "        case 'tts_interrupt':\n"
-                "          console.log('[Ada2DC] tts_interrupt'); try{ window.__ttsBuf = {}; window.__ttsMeta = {}; if(window.__TH_AVATAR__ && window.__TH_AVATAR__.stopSpeaking){ window.__TH_AVATAR__.stopSpeaking(); } }catch(e){} holdLabel('User'); break;\n"
+                "          console.log('[Ada2DC] tts_interrupt'); try{ window.__ttsBuf = {}; window.__ttsMeta = {}; if(window.__TH_AVATAR__ && window.__TH_AVATAR__.stopSpeaking){ window.__TH_AVATAR__.stopSpeaking(); } }catch(e){} /* no overlay/status change on interrupt */ break;\n"
                 "        case 'log_tool':\n"
                 "          try{ const phase = (msg.phase||''); if(phase==='llm_only'){ /* ignore: no Local LLM display */ break; } const name = (msg.name||''); let label='Tool'; if(name==='google_search'){ label='Google Search'; } else if(name==='get_current_weather'){ label='Weather Search'; } if (phase === 'start') {__toolActive=true; holdLabel(label); } else if (phase === 'end') {__toolActive = false; releaseLabel(); }}catch(e){}\n"
                 "          break;\n"
@@ -221,6 +253,18 @@ def create_app(ada2_client_path: str) -> FastAPI:
                 "  window.RTCPeerConnection.prototype = OrigPC.prototype;\n"
                 "  // Nudge AudioContext on user gesture (connect button)\n"
                 "  document.addEventListener('click', (ev)=>{ const t = ev.target; if(t && t.id==='connect-btn'){ setTimeout(()=>{ try{ const head = window.__TH_AVATAR__; if(head && head.audioCtx && head.audioCtx.state!=='running'){ head.audioCtx.resume(); } }catch(e){} ensureLipsync(); }, 50); } });\n"
+                "  // Upload button removed; widget provides its own upload UI.\n"
+                "  function addLibraryBtn(){ try{ if(document.getElementById('document-widget-btn')) return; var b=document.createElement('button'); b.id='document-widget-btn'; b.textContent='📖 Library'; b.style.cssText='position:fixed;left:20px;bottom:72px;z-index:1000;background:linear-gradient(45deg, #667eea, #764ba2);color:#fff;border:none;padding:10px 14px;border-radius:8px;cursor:pointer;font-size:14px;box-shadow:0 4px 12px rgba(102,126,234,.30)'; b.onclick=async function(){ try{ \n"
+                "      // If voice chat is active, disconnect it so reader TTS can use its own session\n"
+                "      try{ if(window.avatarVoiceChat && window.avatarVoiceChat.isConnected && window.avatarVoiceChat.disconnect){ window.avatarVoiceChat.disconnect(); } }catch(_){ }\n"
+                "      // Ensure the lightweight reader channel is connected for document reading\n"
+                "      if(window.readerRTC && window.readerRTC.connect){ await window.readerRTC.connect(); }\n"
+                "      // Hide chat widget and show document widget\n"
+                "      if(window.chatWidget && typeof window.chatWidget.hide==='function'){ window.chatWidget.hide(); }\n"
+                "      if(window.documentWidget){ if(typeof window.documentWidget.returnToLibrary==='function'){ await window.documentWidget.returnToLibrary(); } if(window.widgetManager && window.widgetManager.showWidget){ window.widgetManager.showWidget('document', ()=> window.documentWidget.show()); } else { window.documentWidget.show(); } }\n"
+                "    }catch(e){} }; document.body.appendChild(b);}catch(e){} }\n"
+                "  function init(){ setTimeout(addLibraryBtn, 300); }\n"
+                "  if(document.readyState==='complete' || document.readyState==='interactive'){ init(); } else { document.addEventListener('DOMContentLoaded', init); }\n"
                 "})();\n"
                 "</script>\n"
             )
@@ -252,12 +296,209 @@ def create_app(ada2_client_path: str) -> FastAPI:
     async def legacy_redirect():
         return RedirectResponse(url="/ada2-ui/")
 
+    # ---------------------------
+    # Document/book API endpoints (ADA2-compatible) — lazy imports
+    # ---------------------------
+    @app.post("/api/documents/upload")
+    async def api_upload_document_file(file: UploadFile = File(...)):
+        try:
+            from modules.books.handlers import upload_document_file as _upload_document_file
+
+            logger.info("/api/documents/upload: received file name=%r content_type=%r", file.filename, file.content_type)
+            content = await file.read()
+            filename = file.filename or "uploaded.epub"
+            success, message, doc_info = await _upload_document_file(content, filename)
+            logger.info("/api/documents/upload: success=%s title=%r", bool(success), (doc_info or {}).get("title") if doc_info else None)
+            return {"success": bool(success), "message": message, "document": doc_info}
+        except Exception as e:
+            # Return JSON error for frontend compatibility instead of HTTP 500
+            logger.error("/api/documents/upload: error=%s", e)
+            return {"success": False, "message": str(e)}
+
+    @app.post("/api/documents/upload-path")
+    async def api_upload_document_path(request: dict):
+        try:
+            from modules.books.handlers import upload_document as _upload_document_path
+
+            file_path = str(request.get("file_path", ""))
+            logger.info("/api/documents/upload-path: file_path=%r", file_path)
+            success, message, doc_info = await _upload_document_path(file_path)
+            logger.info("/api/documents/upload-path: success=%s title=%r", bool(success), (doc_info or {}).get("title") if doc_info else None)
+            return {"success": bool(success), "message": message, "document": doc_info}
+        except Exception as e:
+            logger.error("/api/documents/upload-path: error=%s", e)
+            return {"success": False, "message": str(e)}
+
+    @app.get("/api/documents/list")
+    async def api_list_documents():
+        try:
+            from modules.books.handlers import get_document_list as _get_document_list
+
+            success, message, documents = await _get_document_list()
+            logger.info("/api/documents/list: count=%d", len(documents or {}))
+            return {
+                "success": bool(success),
+                "message": message,
+                "documents": documents or {},
+            }
+        except Exception as e:
+            logger.error("/api/documents/list: error=%s", e)
+            return {"success": False, "message": str(e), "documents": {}}
+
+    @app.post("/api/documents/delete")
+    async def api_delete_document(request: dict):
+        try:
+            from modules.books.chroma_store import get_store as _get_store
+
+            document_id = str(request.get("document_id", ""))
+            store = _get_store()
+            ok = await store.delete_document(document_id)
+            logger.info("/api/documents/delete: id=%r success=%s", document_id, bool(ok))
+            return {
+                "success": bool(ok),
+                "message": f"Document {document_id} deleted" if ok else "Delete failed",
+            }
+        except Exception as e:
+            logger.error("/api/documents/delete: error=%s", e)
+            return {"success": False, "message": str(e)}
+
+    @app.post("/api/documents/query")
+    async def api_document_query(request: dict):
+        try:
+            from modules.books.query_parser import parse_document_query as _parse_doc_query
+
+            q = str(request.get("query", ""))
+            logger.info("/api/documents/query: q=%r", q)
+            res = await _parse_doc_query(q)
+            logger.info("/api/documents/query: ok=%s type=%r", bool(res.get("success")), res.get("type"))
+            return res
+        except Exception as e:
+            logger.error("/api/documents/query: error=%s", e)
+            return {"success": False, "message": str(e)}
+
+    @app.post("/api/tts/read")
+    async def api_tts_read(request: dict):
+        """Speak arbitrary text using the active pipeline's TTS, with avatar lipsync.
+
+        Body: { "text": "...", "pc_id": "optional" }
+        """
+        try:
+            from modules.tts_bridge import get_speaker
+
+            text = str(request.get("text", "")).strip()
+            pc_id = request.get("pc_id")
+            if not text:
+                return {"success": False, "message": "Missing text"}
+            speak = get_speaker(pc_id)
+            if not speak:
+                return {"success": False, "message": "No active voice session"}
+            await speak(text)
+            return {"success": True}
+        except Exception as e:
+            logger.error("/api/tts/read: error=%s", e)
+            return {"success": False, "message": str(e)}
+
+    @app.post("/api/chat/send")
+    async def api_chat_send(request: dict):
+        """Send a user message to the existing LLM path for this session.
+
+        Body: { "text": "...", "pc_id": "optional" }
+        """
+        try:
+            from modules.chat_bridge import get_sender
+
+            text = str(request.get("text", "")).strip()
+            pc_id = request.get("pc_id")
+            if not text:
+                return {"success": False, "message": "Missing text"}
+            sender = get_sender(pc_id)
+            if not sender:
+                return {"success": False, "message": "No active chat session"}
+            await sender(text)
+            return {"success": True}
+        except Exception as e:
+            logger.error("/api/chat/send: error=%s", e)
+            return {"success": False, "message": str(e)}
+
+    @app.post("/api/stop")
+    async def api_stop(request: dict):
+        """Interrupt the active LLM/TTS pipeline for a session.
+
+        Body: { "pc_id": "optional" }
+        """
+        try:
+            pc_id = request.get("pc_id")
+            try:
+                from modules.interrupt_bridge import get_interrupter
+
+                intr = get_interrupter(pc_id)
+                if intr:
+                    await intr()
+                    return {"success": True}
+            except Exception as _e:
+                logger.warning("/api/stop interrupter not found: %s", _e)
+            return {"success": False, "message": "No active session"}
+        except Exception as e:
+            logger.error("/api/stop: error=%s", e)
+            return {"success": False, "message": str(e)}
+
+    @app.post("/api/session/clear")
+    async def api_session_clear(request: dict):
+        try:
+            client_id = request.get("client_id")
+            if client_id:
+                try:
+                    from modules.session_store import set_history
+                    set_history(client_id, [])
+                except Exception:
+                    pass
+            return {"success": True}
+        except Exception as e:
+            logger.error("/api/session/clear: error=%s", e)
+            return {"success": False, "message": str(e)}
+
+    @app.post("/api/session/sync")
+    async def api_session_sync(request: dict):
+        """Client-driven session compaction: accepts full user/assistant turns and
+        updates the rolling summary + recent tail in memory.
+
+        Body: { "client_id": str, "turns": [ {"role":"user|assistant", "content":"..."}, ... ] }
+        """
+        try:
+            client_id = request.get("client_id")
+            turns = request.get("turns") or []
+            if not client_id or not isinstance(turns, list):
+                return {"success": False, "message": "Missing client_id or turns"}
+            # Sanitize
+            clean = []
+            for t in turns:
+                try:
+                    r = str(t.get("role", ""))
+                    c = str(t.get("content", ""))
+                    if r in ("user", "assistant"):
+                        clean.append({"role": r, "content": c})
+                except Exception:
+                    continue
+            from modules.session_store import summarize_and_trim, set_session
+
+            summary_now, kept = summarize_and_trim(
+                client_id, clean, keep_last=30, summarize_chunk=30, max_summary_chars=3500
+            )
+            set_session(client_id, summary_now, kept)
+            return {"success": True, "kept": len(kept), "summary_len": len(summary_now)}
+        except Exception as e:
+            logger.error("/api/session/sync: error=%s", e)
+            return {"success": False, "message": str(e)}
+
     # Manage active peer connections by pc_id
     pcs_map: Dict[str, SmallWebRTCConnection] = {}
 
     @app.post("/api/offer")
     async def offer(request: dict, background_tasks: BackgroundTasks):
         pc_id = request.get("pc_id")
+        mode = str(request.get("mode") or "chat").lower().strip()
+        client_id = request.get("client_id")
+        history = request.get("history") or []
 
         if pc_id and pc_id in pcs_map:
             connection = pcs_map[pc_id]
@@ -274,8 +515,36 @@ def create_app(ada2_client_path: str) -> FastAPI:
 
             # Import local bot and start it as a background task
             import bot as bot_module
+            # If client provided history, seed it so the new session restores context immediately
+            try:
+                if client_id and isinstance(history, list):
+                    from modules.session_store import set_history
+
+                    # Only accept user/assistant roles
+                    safe_hist = []
+                    for m in history:
+                        try:
+                            role = str(m.get("role",""))
+                            content = str(m.get("content",""))
+                            if role in ("user","assistant"):
+                                safe_hist.append({"role": role, "content": content})
+                        except Exception:
+                            continue
+                    if safe_hist:
+                        set_history(client_id, safe_hist)
+            except Exception as e:
+                logger.warning("Unable to seed history: %s", e)
 
             runner_args = SmallWebRTCRunnerArguments(webrtc_connection=connection)
+            # Set mode for bot (chat/reader)
+            try:
+                setattr(bot_module, "BOT_MODE", mode)
+            except Exception:
+                pass
+            try:
+                setattr(bot_module, "CLIENT_ID", client_id)
+            except Exception:
+                pass
             background_tasks.add_task(bot_module.bot, runner_args)
 
         answer = connection.get_answer()

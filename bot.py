@@ -20,7 +20,7 @@ Run the bot using::
 """
 
 import os
-from typing import List
+from typing import List, cast
 
 from dotenv import load_dotenv
 from openai.types.chat import ChatCompletionMessageParam
@@ -44,11 +44,30 @@ from modules.tools import (
     create_all_tools,
     register_weather_tool,
     register_google_search_tool,
+    register_book_tools,
 )
 from modules.tool_logger import ToolUsageLogger
 from modules.sentence_tts import SentenceTTSPipeline
+from modules.tts_bridge import register_speaker, unregister_speaker
+from modules.chat_bridge import register_sender, unregister_sender
+from modules.interrupt_bridge import register_interrupter, unregister_interrupter
+from modules.user_transcript_logger import UserTranscriptLogger
+from pipecat.audio.vad.vad_analyzer import VADParams
+from modules.session_store import (
+    get_history,
+    set_history,
+    get_session,
+    set_session,
+    summarize_and_trim,
+    was_cleared,
+)
 
 load_dotenv(override=True)
+
+# Global mode; 'chat' or 'reader'
+BOT_MODE = os.getenv("PIPELINE_MODE", "chat").strip().lower()
+# Stable client identity (set by server per /api/offer)
+CLIENT_ID = None
 
 
 async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
@@ -58,9 +77,10 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
     # Register tool-call handlers (weather + google search)
     register_weather_tool(llm)
     register_google_search_tool(llm)
+    register_book_tools(llm)
 
     # Prompt for gpt-4o, gpt-4o-mini
-    messages: List[ChatCompletionMessageParam] = [
+    base_messages: List[ChatCompletionMessageParam] = [
         {
             "role": "system",
             "content": (
@@ -77,10 +97,45 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
                 "When summarizing search results, write around five sentences per item, using clear, complete sentences. "
                 "Do not number or bullet the items; separate items with a blank line. "
                 "When you present results, say 'degrees Fahrenheit' or 'degrees Celsius' explicitly and spell wind units out: "
-                "use 'miles per hour' when using Fahrenheit and 'kilometers per hour' when using Celsius."
+                "use 'miles per hour' when using Fahrenheit and 'kilometers per hour' when using Celsius. "
+                "For books: prefer tools to handle all commands. For example: 'list books' → book_list; '"
+                "'focus on book 1' → book_focus; 'list chapters' → book_list_chapters; 'read chapter 3' → book_read_chapter; '"
+                "'next section' → book_next_chapter; 'previous section' → book_previous_chapter. If uncertain, call book_command_router with the raw text. "
+                "When reading a section, return only the raw section text so the system may speak it. Do not paraphrase the content."
             ),
         },
     ]
+
+    # Restore conversation summary + recent turns for this client if available
+    cid = globals().get("CLIENT_ID")
+    summary, turns = ("", [])
+    try:
+        summary, turns = get_session(cid)
+        if not summary and not turns:
+            legacy = get_history(cid)
+            if legacy:
+                turns = [m for m in legacy if m.get("role") in ("user", "assistant")]
+                set_session(cid, "", turns)
+    except Exception:
+        summary, turns = "", []
+
+    messages: List[ChatCompletionMessageParam] = list(base_messages)
+    if summary:
+        messages.append(
+            cast(
+                ChatCompletionMessageParam,
+                {"role": "system", "content": f"Conversation Summary (for context):\n{summary}"},
+            )
+        )
+    for m in turns:
+        r = str(m.get("role", ""))
+        if r in ("user", "assistant"):
+            messages.append(
+                cast(
+                    ChatCompletionMessageParam,
+                    {"role": r, "content": str(m.get("content", ""))},
+                )
+            )
 
     # Provide tools to the context so the model may call them.
     context = OpenAILLMContext(messages, tools=create_all_tools(), tool_choice="auto")
@@ -99,6 +154,7 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
             transport.input(),
             rtvi,
             stt,
+            UserTranscriptLogger(),
             context_aggregator.user(),
             llm,
             sentence_tts,
@@ -117,14 +173,81 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
         observers=[RTVIObserver(rtvi)],
     )
 
+    # Track whether we restored prior history
+    had_history = bool(summary or turns)
+
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
-        # Kick off the conversation.
-        messages.append({"role": "system", "content": "Say Hello, I'm ADA. How can I assist you today?"})
-        await task.queue_frames([LLMRunFrame()])
+        # Relax VAD slightly on first connect to avoid missing first short utterance
+        try:
+            from modules.services import get_vad
+            get_vad().set_params(VADParams(confidence=0.6, start_secs=0.12, stop_secs=0.6, min_volume=0.35))
+        except Exception:
+            pass
+        # Register a speaker function for external chapter reading
+        # Register a speaker function for external chapter reading
+        try:
+            pc_id = (
+                getattr(getattr(transport, "connection", None), "pc_id", None)
+                or getattr(getattr(runner_args, "webrtc_connection", None), "pc_id", None)
+                or "default"
+            )
+            async def _speak(text: str):
+                from pipecat.frames.frames import TTSSpeakFrame  # local import to avoid top-level deps
+                await task.queue_frames([TTSSpeakFrame(text)])
+
+            register_speaker(str(pc_id), _speak)
+            async def _send(text: str):
+                # Append a user message and trigger the LLM on the same pipeline
+                messages.append({"role": "user", "content": str(text)})
+                await task.queue_frames([LLMRunFrame()])
+
+            register_sender(str(pc_id), _send)
+
+            # Register an interrupter that injects an InterruptionFrame into this session's pipeline
+            from pipecat.frames.frames import InterruptionFrame
+
+            async def _interrupt():
+                await task.queue_frames([InterruptionFrame()])
+
+            register_interrupter(str(pc_id), _interrupt)
+        except Exception:
+            pass
+        # Kick off a greeting only when starting fresh in chat mode
+        if BOT_MODE != "reader" and not had_history:
+            messages.append({"role": "system", "content": "Say Hello, I'm ADA. How can I assist you today?"})
+            await task.queue_frames([LLMRunFrame()])
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
+        try:
+            pc_id = (
+                getattr(getattr(transport, "connection", None), "pc_id", None)
+                or getattr(getattr(runner_args, "webrtc_connection", None), "pc_id", None)
+                or "default"
+            )
+            unregister_speaker(str(pc_id))
+            unregister_sender(str(pc_id))
+            unregister_interrupter(str(pc_id))
+            # Persist user/assistant turns + summarize oldest unless cleared
+            try:
+                cid = globals().get("CLIENT_ID")
+                if cid and not was_cleared(cid):
+                    # Convert to simple role/content dicts for summarization
+                    all_turns = [
+                        {
+                            "role": str(m.get("role", "")),
+                            "content": str(m.get("content", "")),
+                        }
+                        for m in messages
+                        if m.get("role") in ("user", "assistant")
+                    ]
+                    summary_now, kept = summarize_and_trim(cid, all_turns, keep_last=30, summarize_chunk=30, max_summary_chars=3500)
+                    set_session(cid, summary_now, kept)
+            except Exception:
+                pass
+        except Exception:
+            pass
         await task.cancel()
 
     runner = PipelineRunner(handle_sigint=runner_args.handle_sigint)

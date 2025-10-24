@@ -15,7 +15,9 @@ from pipecat.frames.frames import (
     OutputAudioRawFrame,
     StartFrame,
     TTSAudioRawFrame,
+    TTSSpeakFrame,
     TransportMessageUrgentFrame,
+    FunctionCallsStartedFrame,
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.services.kokoro.tts import KokoroTTSService
@@ -52,6 +54,8 @@ class SentenceTTSPipeline(FrameProcessor):
         self._pregen_task: Optional[asyncio.Task] = None
         self._pregen_sentence: Optional[str] = None
         self._pregen_result: Optional[dict] = None
+        # When a tool call starts mid-turn, suppress the draft answer pre-tool
+        self._suppress_this_response: bool = False
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
@@ -65,6 +69,21 @@ class SentenceTTSPipeline(FrameProcessor):
             await self._tts.start(frame)
             await self._tts_pregen.start(frame)
             await self.push_frame(frame, direction)
+            return
+
+        # Allow external TTSSpeakFrame to route text directly into this pipeline
+        if isinstance(frame, TTSSpeakFrame):
+            raw = getattr(frame, "text", None) or getattr(frame, "content", "")
+            text = str(raw or "").strip()
+            if text:
+                # Chunk into phrases similar to streaming LLM path (split by . ! ? , ; : and ellipsis)
+                parts = [p.strip() for p in re.split(r"(?<=[\.!\?\,;:\u2026])\s+", text) if p.strip()]
+                if not parts:
+                    parts = [text]
+                for p in parts:
+                    await self._queue.put(p)
+                if not self._drain_task or self._drain_task.done():
+                    self._drain_task = self.create_task(self._drain_queue(), name="speak-queue")
             return
 
         if isinstance(frame, EndFrame):
@@ -84,6 +103,7 @@ class SentenceTTSPipeline(FrameProcessor):
             self._emitted_chars = 0
             self._capturing = False
             self._last_sentence = ""
+            self._suppress_this_response = False
             # Hide current subtitle immediately
             await self.queue_frame(
                 TransportMessageUrgentFrame({"type": "subtitle_end", "text": ""})
@@ -99,13 +119,28 @@ class SentenceTTSPipeline(FrameProcessor):
             self._emitted_chars = 0
             self._capturing = True
             self._last_sentence = ""
+            self._suppress_this_response = False
             # Signal UI we're starting a spoken response
             await self.queue_frame(TransportMessageUrgentFrame({"type": "subtitle_start"}))
             await self.push_frame(frame, direction)
             return
 
+        # If a tool call starts, suppress the current draft answer
+        if isinstance(frame, FunctionCallsStartedFrame):
+            self._suppress_this_response = True
+            await self._stop_drain()
+            await self._stop_pregen()
+            await self._clear_queue()
+            # Hide any subtitle text accumulated so far
+            await self.queue_frame(TransportMessageUrgentFrame({"type": "subtitle_end", "text": ""}))
+            await self.push_frame(frame, direction)
+            return
+
         if isinstance(frame, LLMTextFrame):
             if self._capturing:
+                if self._suppress_this_response:
+                    # Skip streaming draft text when a tool call is in progress
+                    return
                 text = getattr(frame, "text", None) or getattr(frame, "content", "")
                 if text:
                     self._buffer.append(text)
@@ -130,10 +165,20 @@ class SentenceTTSPipeline(FrameProcessor):
             self._capturing = False
             pending = "".join(self._buffer)
             trailing = pending[self._emitted_chars :].strip()
-            if trailing:
-                await self._queue.put(trailing)
-            if not self._drain_task or self._drain_task.done():
-                self._drain_task = self.create_task(self._drain_queue(), name="speak-queue")
+            if not self._suppress_this_response:
+                if trailing:
+                    await self._queue.put(trailing)
+                if not self._drain_task or self._drain_task.done():
+                    self._drain_task = self.create_task(self._drain_queue(), name="speak-queue")
+                # Also emit assistant full text so chat UI can show history
+                try:
+                    await self.queue_frame(
+                        TransportMessageUrgentFrame({"type": "assistant_full_text", "text": pending})
+                    )
+                except Exception:
+                    pass
+            # reset suppression for next turn
+            self._suppress_this_response = False
             await self.push_frame(frame, direction)
             return
 

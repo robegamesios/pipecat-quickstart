@@ -199,6 +199,24 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
+# --- Project-specific ignores ---
+# Local book ingestion artifacts (generated at runtime)
+document_list.json
+chapters_*.json
+uploads/
+
+# ChromaDB persistent store (generated database files)
+chromadb_books/
+chromadb_memory_documents/
+
+# Large local model binaries (keep out of VCS)
+assets/*.onnx
+assets/*.bin
+assets/*.pth
+
+# macOS cruft
+.DS_Store
+
 # macOS system files
 .DS_Store
 .AppleDouble
