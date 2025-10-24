@@ -85,61 +85,118 @@ class TextHighlighter {
     }
 
     /**
-     * Highlight text based on subtitle word
-     * @param {string} searchText - The text to highlight
+     * Highlight text based on a phrase/sentence instead of just a word.
+     * Falls back to word highlighting if phrase alignment fails.
+     * @param {string} searchText - The phrase or words from subtitles
      * @returns {boolean} True if highlighting was successful
      */
     highlightText(searchText) {
         if (!searchText || !this.isInitialized) {
             return false;
         }
-
-        const cleanSearchText = searchText.replace(/[^\w\s]/g, '').toLowerCase().trim();
-
-        if (cleanSearchText.length < 2) {
-            return false;
+        // Try phrase alignment first
+        if (this.highlightPhrase(searchText)) {
+            return true;
         }
-
-        // Find the next matching segment
+        // Fallback to word-based alignment
+        const cleanSearchText = searchText.replace(/[^\w\s]/g, ' ').toLowerCase().trim();
+        if (cleanSearchText.length < 2) return false;
         const matchIndex = this.findNextMatch(cleanSearchText);
+        if (matchIndex === -1) return false;
+        this.applySpanHighlightRange(matchIndex, matchIndex);
+        return true;
+    }
 
-        if (matchIndex === -1) {
+    /**
+     * Attempt to highlight a phrase/sentence (continuous span range).
+     * @param {string} phrase
+     * @returns {boolean}
+     */
+    highlightPhrase(phrase) {
+        try {
+            const text = String(phrase || '').replace(/\s+/g, ' ').trim();
+            if (!text) return false;
+            const full = String(this.fullText || '');
+            if (!full) return false;
+
+            const fullLower = full.toLowerCase();
+            // Build a robust fragment from the phrase
+            let fragment = text.toLowerCase();
+            // Keep a middle-sized fragment ~30-80 chars to locate
+            if (fragment.length > 120) fragment = fragment.slice(0, 120);
+            if (fragment.length < 20) {
+                // Augment with nearby words: take last 4 words
+                const words = fragment.split(' ').filter(Boolean);
+                fragment = words.slice(-6).join(' ');
+            }
+            if (!fragment || fragment.length < 4) return false;
+
+            // Search near current position first, with small backoff window
+            const startSearch = Math.max(0, this.currentReadingPosition - 100);
+            let idx = fullLower.indexOf(fragment, startSearch);
+            if (idx === -1) {
+                // Fallback: global search
+                idx = fullLower.indexOf(fragment);
+                if (idx === -1) return false;
+            }
+
+            let startIdx = idx;
+            let endIdx = idx + fragment.length;
+
+            // Expand to sentence boundaries
+            const punct = /[.!?]/;
+            // backtrack to previous boundary
+            for (let i = startIdx - 1; i >= 0; i--) {
+                const ch = full[i];
+                if (punct.test(ch)) { startIdx = i + 1; break; }
+                if (i < startIdx - 200) break;
+            }
+            // forward to next boundary
+            for (let j = endIdx; j < full.length; j++) {
+                const ch = full[j];
+                if (punct.test(ch)) { endIdx = j + 1; break; }
+                if (j > endIdx + 240) break;
+            }
+
+            // Map character range -> span index range
+            let firstSpan = -1; let lastSpan = -1;
+            for (let i = 0; i < this.textSegments.length; i++) {
+                const span = this.textSegments[i];
+                const s = parseInt(span.dataset.startPos);
+                const e = parseInt(span.dataset.endPos);
+                if (firstSpan === -1 && e > startIdx) firstSpan = i;
+                if (s < endIdx) lastSpan = i; else break;
+            }
+            if (firstSpan === -1 || lastSpan === -1) return false;
+            this.applySpanHighlightRange(firstSpan, lastSpan);
+            // Update reading position to end of phrase
+            this.currentReadingPosition = endIdx;
+            return true;
+        } catch (e) {
             return false;
         }
+    }
 
+    /**
+     * Apply highlight styling across a span index range and scroll into view.
+     * @param {number} firstIdx
+     * @param {number} lastIdx
+     */
+    applySpanHighlightRange(firstIdx, lastIdx) {
         // Clear previous highlights
-        this.clearAllHighlights();
-
-        // Apply highlighting
         for (let i = 0; i < this.textSegments.length; i++) {
             const span = this.textSegments[i];
-
-            if (i < matchIndex) {
-                // Mark as read
+            if (i < firstIdx) {
                 span.className = span.className.replace(/\b(current-reading-text|unread-text|current-position-text)\b/g, '').trim() + ' read-text';
-            } else if (i === matchIndex) {
-                // Current highlight
+            } else if (i >= firstIdx && i <= lastIdx) {
                 span.className = span.className.replace(/\b(read-text|unread-text|current-position-text)\b/g, '').trim() + ' current-reading-text';
-                this.currentHighlightIndex = i;
-
-                // Update reading position
-                const segmentEnd = parseInt(span.dataset.endPos);
-                this.currentReadingPosition = segmentEnd;
             } else {
-                // Mark as unread
                 span.className = span.className.replace(/\b(read-text|current-reading-text|current-position-text)\b/g, '').trim() + ' unread-text';
             }
         }
-
-        // Scroll to highlighted text
+        this.currentHighlightIndex = firstIdx;
         this.scrollToHighlight();
-
-        // Notify progress update if callback provided
-        if (this.onProgressUpdate) {
-            this.onProgressUpdate(this.getProgress());
-        }
-
-        return true;
+        if (this.onProgressUpdate) this.onProgressUpdate(this.getProgress());
     }
 
     /**
