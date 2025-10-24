@@ -85,17 +85,18 @@ class TextHighlighter {
     }
 
     /**
-     * Highlight text based on a phrase/sentence instead of just a word.
-     * Falls back to word highlighting if phrase alignment fails.
-     * @param {string} searchText - The phrase or words from subtitles
-     * @returns {boolean} True if highlighting was successful
+     * Highlight text progressively based on the subtitle phrase.
+     * First tries progressive phrase alignment (only highlight spoken portion
+     * of the sentence so far). Falls back to word alignment if needed.
+     * @param {string} searchText
+     * @returns {boolean}
      */
     highlightText(searchText) {
         if (!searchText || !this.isInitialized) {
             return false;
         }
-        // Try phrase alignment first
-        if (this.highlightPhrase(searchText)) {
+        // Progressive phrase highlight (partial sentence up to current fragment)
+        if (this.highlightPhraseProgressive(searchText)) {
             return true;
         }
         // Fallback to word-based alignment
@@ -108,11 +109,13 @@ class TextHighlighter {
     }
 
     /**
-     * Attempt to highlight a phrase/sentence (continuous span range).
+     * Attempt to highlight only the already-spoken portion of a sentence.
+     * Maps the current subtitle fragment to full text, expands start to
+     * sentence boundary but clamps end to the end of the fragment.
      * @param {string} phrase
      * @returns {boolean}
      */
-    highlightPhrase(phrase) {
+    highlightPhraseProgressive(phrase) {
         try {
             const text = String(phrase || '').replace(/\s+/g, ' ').trim();
             if (!text) return false;
@@ -141,7 +144,7 @@ class TextHighlighter {
             }
 
             let startIdx = idx;
-            let endIdx = idx + fragment.length;
+            let endIdx = idx + fragment.length; // clamp to fragment
 
             // Expand to sentence boundaries
             const punct = /[.!?]/;
@@ -151,12 +154,9 @@ class TextHighlighter {
                 if (punct.test(ch)) { startIdx = i + 1; break; }
                 if (i < startIdx - 200) break;
             }
-            // forward to next boundary
-            for (let j = endIdx; j < full.length; j++) {
-                const ch = full[j];
-                if (punct.test(ch)) { endIdx = j + 1; break; }
-                if (j > endIdx + 240) break;
-            }
+            // We deliberately do NOT advance endIdx to the full sentence end;
+            // we keep it at the end of the current subtitle fragment to avoid
+            // highlighting unreached words.
 
             // Map character range -> span index range
             let firstSpan = -1; let lastSpan = -1;

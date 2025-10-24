@@ -17,12 +17,11 @@
 
 /* Currently being read - bright highlight with animation */
 .text-segment.current-reading-text {
-    background: linear-gradient(45deg, #ffeb3b, #ffc107);
+    background: #ffd54f; /* solid amber */
     color: #000;
     font-weight: bold;
     padding: 2px 1px;
     border-radius: 3px;
-    animation: reading-pulse 2s ease-in-out infinite alternate;
 }
 
 /* Text that hasn't been read yet - normal styling */
@@ -76,16 +75,7 @@
     }
 }
 
-@keyframes reading-pulse {
-    from { 
-        background: linear-gradient(45deg, #ffeb3b, #ffc107);
-        opacity: 1;
-    }
-    to { 
-        background: linear-gradient(45deg, #ffc107, #ff9800);
-        opacity: 0.95;
-    }
-}
+/* Removed animated pulse to keep a stable color */
 
 /* Chat-specific styles */
 .chat-response-text .text-segment {
@@ -93,8 +83,8 @@
 }
 
 .chat-response-text .text-segment.current-reading-text {
-    /* Ensure highlighting is visible on dark chat background */
-    background: linear-gradient(45deg, #ffeb3b, #ffc107);
+    /* Solid color on dark chat background */
+    background: #ffd54f;
     color: #000;
     font-weight: bold;
     padding: 2px 1px;
