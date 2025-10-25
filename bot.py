@@ -21,6 +21,7 @@ Run the bot using::
 
 import os
 from typing import List, cast
+from datetime import datetime
 
 from dotenv import load_dotenv
 from openai.types.chat import ChatCompletionMessageParam
@@ -120,6 +121,18 @@ async def run_bot(transport: BaseTransport, runner_args: RunnerArguments):
         summary, turns = "", []
 
     messages: List[ChatCompletionMessageParam] = list(base_messages)
+    # Inject current system date/time for the assistant to use in responses
+    try:
+        now = datetime.now().astimezone()
+        now_str = now.strftime("%A, %B %d, %Y %I:%M %p %Z")
+        messages.append(
+            cast(ChatCompletionMessageParam, {
+                "role": "system",
+                "content": f"Current date and time: {now_str}",
+            })
+        )
+    except Exception:
+        pass
     if summary:
         messages.append(
             cast(
