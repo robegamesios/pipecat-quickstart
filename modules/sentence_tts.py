@@ -16,7 +16,7 @@ from pipecat.frames.frames import (
     StartFrame,
     TTSAudioRawFrame,
     TTSSpeakFrame,
-    TransportMessageUrgentFrame,
+    OutputTransportMessageFrame,
     FunctionCallsStartedFrame,
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
@@ -30,7 +30,7 @@ class SentenceTTSPipeline(FrameProcessor):
     TTS processor; this node streams audio frames itself.
     """
 
-    def __init__(self, *, name: Optional[str] = None, voice_id: str = "af_sarah"):
+    def __init__(self, *, name: Optional[str] = None, voice_id: str = "af_sarah", use_client_audio: bool = True):
         super().__init__(name=name or "SentenceTTSPipeline")
         self._buffer: List[str] = []
         self._emitted_chars: int = 0
@@ -38,6 +38,7 @@ class SentenceTTSPipeline(FrameProcessor):
         self._queue: asyncio.Queue[str] = asyncio.Queue()
         self._drain_task: Optional[asyncio.Task] = None
         self._last_sentence: str = ""
+        self._use_client_audio: bool = bool(use_client_audio)
 
         # Embedded TTS service
         self._tts = KokoroTTSService(
@@ -106,10 +107,10 @@ class SentenceTTSPipeline(FrameProcessor):
             self._suppress_this_response = False
             # Hide current subtitle immediately
             await self.queue_frame(
-                TransportMessageUrgentFrame({"type": "subtitle_end", "text": ""})
+                OutputTransportMessageFrame({"type": "subtitle_end", "text": ""})
             )
             # Notify client to stop lipsync/audio assembly immediately
-            await self.queue_frame(TransportMessageUrgentFrame({"type": "tts_interrupt"}))
+            await self.queue_frame(OutputTransportMessageFrame({"type": "tts_interrupt"}))
             # Propagate interruption downstream so transports can react
             await self.push_frame(frame, direction)
             return
@@ -121,7 +122,7 @@ class SentenceTTSPipeline(FrameProcessor):
             self._last_sentence = ""
             self._suppress_this_response = False
             # Signal UI we're starting a spoken response
-            await self.queue_frame(TransportMessageUrgentFrame({"type": "subtitle_start"}))
+            await self.queue_frame(OutputTransportMessageFrame({"type": "subtitle_start"}))
             await self.push_frame(frame, direction)
             return
 
@@ -132,7 +133,7 @@ class SentenceTTSPipeline(FrameProcessor):
             await self._stop_pregen()
             await self._clear_queue()
             # Hide any subtitle text accumulated so far
-            await self.queue_frame(TransportMessageUrgentFrame({"type": "subtitle_end", "text": ""}))
+            await self.queue_frame(OutputTransportMessageFrame({"type": "subtitle_end", "text": ""}))
             await self.push_frame(frame, direction)
             return
 
@@ -173,7 +174,7 @@ class SentenceTTSPipeline(FrameProcessor):
                 # Also emit assistant full text so chat UI can show history
                 try:
                     await self.queue_frame(
-                        TransportMessageUrgentFrame({"type": "assistant_full_text", "text": pending})
+                        OutputTransportMessageFrame({"type": "assistant_full_text", "text": pending})
                     )
                 except Exception:
                     pass
@@ -206,7 +207,7 @@ class SentenceTTSPipeline(FrameProcessor):
                 break
             self._last_sentence = sentence
             await self.queue_frame(
-                TransportMessageUrgentFrame({"type": "subtitle_delta", "text": sentence})
+                OutputTransportMessageFrame({"type": "subtitle_delta", "text": sentence})
             )
             # Optionally launch pre-gen for the next phrase if this ends with a comma
             if sentence.rstrip().endswith(",") and self._pregen_task is None and prefetched_sentence is None and not self._queue.empty():
@@ -225,7 +226,7 @@ class SentenceTTSPipeline(FrameProcessor):
             # Announce a new phrase assembly to the client for lipsync
             sent_id = f"s-{asyncio.get_running_loop().time():.6f}".replace(".", "")
             await self.queue_frame(
-                TransportMessageUrgentFrame(
+                OutputTransportMessageFrame(
                     {
                         "type": "tts_sentence_start",
                         "id": sent_id,
@@ -234,20 +235,23 @@ class SentenceTTSPipeline(FrameProcessor):
                     }
                 )
             )
+            # Yield to event loop to prioritize data-channel start message
+            await asyncio.sleep(0)
 
             # If the next phrase was pre-generated for chaining and it's exactly this sentence, use it
             if self._pregen_result is not None and self._pregen_sentence == sentence:
                 frames = self._pregen_result.get("frames", [])
                 sample_rate = self._pregen_result.get("sample_rate", sample_rate)
                 for fr in frames:
-                    out = OutputAudioRawFrame(
-                        audio=fr["audio"], sample_rate=fr["sample_rate"], num_channels=fr["num_channels"]
-                    )
-                    await self.push_frame(out)
+                    if not self._use_client_audio:
+                        out = OutputAudioRawFrame(
+                            audio=fr["audio"], sample_rate=fr["sample_rate"], num_channels=fr["num_channels"]
+                        )
+                        await self.push_frame(out)
                     try:
                         b64 = base64.b64encode(fr["audio"]).decode("ascii")
                         await self.queue_frame(
-                            TransportMessageUrgentFrame(
+                            OutputTransportMessageFrame(
                                 {"type": "tts_sentence_chunk", "id": sent_id, "chunk": b64}
                             )
                         )
@@ -262,15 +266,16 @@ class SentenceTTSPipeline(FrameProcessor):
                     if isinstance(f, TTSAudioRawFrame):
                         sample_rate = f.sample_rate or sample_rate
                         total_frames += getattr(f, "num_frames", 0)
-                        out = OutputAudioRawFrame(
-                            audio=f.audio, sample_rate=f.sample_rate, num_channels=f.num_channels
-                        )
-                        await self.push_frame(out)
+                        if not self._use_client_audio:
+                            out = OutputAudioRawFrame(
+                                audio=f.audio, sample_rate=f.sample_rate, num_channels=f.num_channels
+                            )
+                            await self.push_frame(out)
                         # Forward PCM chunk for lipsync (base64 to keep messages textual)
                         try:
                             b64 = base64.b64encode(f.audio).decode("ascii")
                             await self.queue_frame(
-                                TransportMessageUrgentFrame(
+                                OutputTransportMessageFrame(
                                     {
                                         "type": "tts_sentence_chunk",
                                         "id": sent_id,
@@ -283,7 +288,7 @@ class SentenceTTSPipeline(FrameProcessor):
 
             # Signal sentence assembly end
             await self.queue_frame(
-                TransportMessageUrgentFrame({"type": "tts_sentence_end", "id": sent_id})
+                OutputTransportMessageFrame({"type": "tts_sentence_end", "id": sent_id})
             )
             # Approximate playout time to hold subtitle until audio finishes
             duration_s = (total_frames / max(sample_rate, 1)) if total_frames else max(len(sentence) * 0.06, 0.4)
@@ -292,7 +297,7 @@ class SentenceTTSPipeline(FrameProcessor):
 
         # Keep last sentence visible until next start
         await self.queue_frame(
-            TransportMessageUrgentFrame({"type": "subtitle_end", "text": self._last_sentence})
+            OutputTransportMessageFrame({"type": "subtitle_end", "text": self._last_sentence})
         )
 
     async def _stop_drain(self):
