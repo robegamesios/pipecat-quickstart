@@ -772,6 +772,13 @@ class DocumentWidget {
         // Initialize reading button states
         this.updateReadingButtons();
 
+        // Recenter subtitles now that layout changed
+        try { const box = document.getElementById('subtitles'); if (box) { box.style.display = box.style.display || 'none'; /* preserve visibility */ (function(){
+            const parent = document.getElementById('avatar-container') || document.body;
+            if (box.parentElement !== parent) parent.appendChild(box);
+            box.style.position = 'absolute'; box.style.left = '50%'; box.style.right = 'auto'; box.style.top='auto'; box.style.bottom='80px'; box.style.transform='translateX(-50%)'; box.style.maxWidth='calc(100% - 80px)'; box.style.zIndex=200;
+        })(); } } catch(_) {}
+
     }
 
     /**

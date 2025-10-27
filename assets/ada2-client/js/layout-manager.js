@@ -25,9 +25,7 @@
       '.split-layout .chatgpt-widget{ position:absolute; top:0; right:0; width:50vw; height:100vh; }',
       '[data-layout="portrait"].split-layout #avatar-container{ position:absolute; top:0; left:0; width:100vw; height:50vh; }',
       '[data-layout="portrait"].split-layout .chatgpt-widget{ position:absolute; bottom:0; left:0; width:100vw; height:50vh; }',
-      // Subtitles centered under avatar
-      '.split-layout #subtitles{ left: 25vw; transform: translateX(-50%); }',
-      '[data-layout="portrait"].split-layout #subtitles{ left: 50%; }',
+      // Subtitles are positioned by JS within avatar container; no layout override here
       // Max width constraint
       '.app-root{ max-width: 1728px; margin: 0 auto; position:relative; }'
     ].join('\n');
