@@ -1438,23 +1438,7 @@ class DocumentWidget {
             const result = await response.json();
 
             if (result.success) {
-                // Upload successful - refresh the library
-                const responseText = `Successfully uploaded "${file.name}". Refreshing your library.`;
-
-                // Speak the response
-                if (window.kokoroSpeak) {
-                    window.kokoroSpeak(responseText, {}, (sentence, id, word) => {
-                        const subtitlesElement = document.getElementById('subtitles');
-                        if (subtitlesElement) {
-                            if (id !== this.lastSentenceId) {
-                                this.lastSentenceId = id;
-                                subtitlesElement.textContent = '';
-                            }
-                            subtitlesElement.textContent += word;
-                        }
-                    });
-                }
-
+                // Upload successful - refresh the library (no TTS)
                 // Refresh the document library
                 setTimeout(async () => {
                     try {
@@ -1559,23 +1543,7 @@ class DocumentWidget {
             const result = await response.json();
 
             if (result.success) {
-                // Success - refresh the library
-                const responseText = `Deleted "${docTitle}" successfully.`;
-
-                // Speak the response
-                if (window.kokoroSpeak) {
-                    window.kokoroSpeak(responseText, {}, (sentence, id, word) => {
-                        const subtitlesElement = document.getElementById('subtitles');
-                        if (subtitlesElement) {
-                            if (id !== this.lastSentenceId) {
-                                this.lastSentenceId = id;
-                                subtitlesElement.textContent = '';
-                            }
-                            subtitlesElement.textContent += word;
-                        }
-                    });
-                }
-
+                // Success - refresh the library (no TTS)
                 // Refresh the document library
                 setTimeout(async () => {
                     try {
