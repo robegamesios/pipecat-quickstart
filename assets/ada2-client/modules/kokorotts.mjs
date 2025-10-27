@@ -114,7 +114,9 @@ class KokoroTTS {
   */
   initWorker() {
     try {
-      this.phonemeWorker = new Worker('/modules/phoneme-worker.js');
+      // Resolve worker URL relative to this module so it works under /ada2-static/
+      const workerUrl = new URL('./phoneme-worker.js', import.meta.url);
+      this.phonemeWorker = new Worker(workerUrl);
       this.workerInitialized = false;
       
       this.phonemeWorker.onmessage = (e) => {
