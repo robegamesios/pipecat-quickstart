@@ -10,7 +10,6 @@ from pipecat.services.moonshine.stt import MoonshineSTTService
 from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.transcriptions.language import Language
 from pipecat.transports.base_transport import TransportParams
-from pipecat.transports.daily.transport import DailyParams
 
 
 @lru_cache(maxsize=1)
@@ -58,12 +57,8 @@ def create_llm():
 
 def create_transport_params():
     vad = get_vad()
+    # Single built-in transport (SmallWebRTC)
     return {
-        "daily": lambda: DailyParams(
-            audio_in_enabled=True,
-            audio_out_enabled=True,
-            vad_analyzer=vad,
-        ),
         "webrtc": lambda: TransportParams(
             audio_in_enabled=True,
             audio_out_enabled=True,
