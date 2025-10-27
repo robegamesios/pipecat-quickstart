@@ -67,7 +67,11 @@ class DocumentStore:
     """Native ChromaDB-backed store for book chunks + JSON backups for chapters."""
 
     def __init__(self, *, persist_path: str = "./chromadb_books"):
-        self.client = chromadb.PersistentClient(path=persist_path)
+        # Keep all persistent artifacts (Chroma DB + JSON backups) together
+        self.persist_path = os.path.abspath(persist_path)
+        os.makedirs(self.persist_path, exist_ok=True)
+
+        self.client = chromadb.PersistentClient(path=self.persist_path)
         self.embeds = OllamaEmbeddingFunction()
         self.content = self.client.get_or_create_collection(
             name="document_content_ollama", embedding_function=self.embeds
@@ -133,19 +137,19 @@ class DocumentStore:
 
     async def _save_backups(self, doc: EPUBDocument) -> None:
         try:
-            doc_list = self._read_json("./document_list.json") or {}
+            doc_list = self._read_json(self._json_path("document_list.json")) or {}
             doc_list[doc.id] = {
                 "title": doc.title,
                 "author": doc.author,
                 "chapters": len(doc.chapters),
             }
-            self._write_json("./document_list.json", doc_list)
+            self._write_json(self._json_path("document_list.json"), doc_list)
 
             chapters = [
                 {"number": i + 1, "title": ch["title"], "content": ch["content"]}
                 for i, ch in enumerate(doc.chapters)
             ]
-            self._write_json(f"./chapters_{doc.id}.json", chapters)
+            self._write_json(self._json_path(f"chapters_{doc.id}.json"), chapters)
         except Exception as e:
             logger.warning("Failed to write JSON backups: %s", e)
 
@@ -153,12 +157,17 @@ class DocumentStore:
     # Queries / navigation
     # ------------------------------
     async def list_documents(self) -> Dict[str, Dict[str, Any]]:
-        docs = self._read_json("./document_list.json")
+        # Prefer the organized path; fallback to legacy root if present
+        docs = self._read_json(self._json_path("document_list.json"))
+        if docs is None:
+            docs = self._read_json("./document_list.json")
         return docs if isinstance(docs, dict) else {}
 
     async def get_chapters(self, document_id: str) -> List[Dict[str, Any]]:
-        path = f"./chapters_{document_id}.json"
+        path = self._json_path(f"chapters_{document_id}.json")
         data = self._read_json(path)
+        if data is None:
+            data = self._read_json(f"./chapters_{document_id}.json")
         if isinstance(data, list):
             # Improve titles with a short preview if needed
             out: List[Dict[str, Any]] = []
@@ -176,8 +185,10 @@ class DocumentStore:
         return []
 
     async def get_chapter_content(self, document_id: str, chapter_number: int) -> str:
-        path = f"./chapters_{document_id}.json"
+        path = self._json_path(f"chapters_{document_id}.json")
         data = self._read_json(path)
+        if data is None:
+            data = self._read_json(f"./chapters_{document_id}.json")
         if isinstance(data, list):
             for ch in data:
                 if ch.get("number") == chapter_number:
@@ -187,14 +198,19 @@ class DocumentStore:
     async def delete_document(self, document_id: str) -> bool:
         try:
             # Remove from backups
-            doc_list = self._read_json("./document_list.json") or {}
+            doc_list = self._read_json(self._json_path("document_list.json")) or {}
             if document_id in doc_list:
                 del doc_list[document_id]
-                self._write_json("./document_list.json", doc_list)
+                self._write_json(self._json_path("document_list.json"), doc_list)
 
-            ch_path = f"./chapters_{document_id}.json"
+            ch_path = self._json_path(f"chapters_{document_id}.json")
             if os.path.exists(ch_path):
                 os.remove(ch_path)
+            else:
+                # Legacy cleanup if old location exists
+                legacy = f"./chapters_{document_id}.json"
+                if os.path.exists(legacy):
+                    os.remove(legacy)
 
             # Try to cleanup ChromaDB content by metadata filter
             try:
@@ -242,8 +258,16 @@ class DocumentStore:
         return None
 
     def _write_json(self, path: str, data: Any) -> None:
+        # Ensure target directory exists
+        try:
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        except Exception:
+            pass
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
+
+    def _json_path(self, name: str) -> str:
+        return os.path.join(self.persist_path, name)
 
 
 # Global singleton
