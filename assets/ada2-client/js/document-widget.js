@@ -47,6 +47,8 @@ class DocumentWidget {
         this.isReading = false;
         this.currentReadingText = '';
         this.readingStartPosition = 0;
+        // Track which pc_id we used for the current reading session
+        this.activePcIdForReading = null;
 
         // Bookmark system
         this.bookmarks = this.loadBookmarks();
@@ -770,6 +772,13 @@ class DocumentWidget {
         // Initialize reading button states
         this.updateReadingButtons();
 
+        // Recenter subtitles now that layout changed
+        try { const box = document.getElementById('subtitles'); if (box) { box.style.display = box.style.display || 'none'; /* preserve visibility */ (function(){
+            const parent = document.getElementById('avatar-container') || document.body;
+            if (box.parentElement !== parent) parent.appendChild(box);
+            box.style.position = 'absolute'; box.style.left = '50%'; box.style.right = 'auto'; box.style.top='auto'; box.style.bottom='80px'; box.style.transform='translateX(-50%)'; box.style.maxWidth='calc(100% - 80px)'; box.style.zIndex=200;
+        })(); } } catch(_) {}
+
     }
 
     /**
@@ -1140,16 +1149,29 @@ class DocumentWidget {
 
         // Use Kokoro TTS via global window.kokoroSpeak (server injects kokoro-bootstrap)
         try {
-            // Ensure receive-only reader session for server-side TTS
-            if (!(window.readerRTC && window.readerRTC.isConnected && window.readerRTC.isConnected())) {
-              try { if (window.readerRTC && window.readerRTC.connect) { await window.readerRTC.connect(); } } catch(_){}
-            }
+            // Choose the active session: prefer voice chat if connected
+            let targetPcId = null;
+            try {
+              if (window.avatarVoiceChat && window.avatarVoiceChat.isConnected && window.avatarVoiceChat.pc_id) {
+                targetPcId = String(window.avatarVoiceChat.pc_id);
+              } else {
+                // Fallback to reader RTC; ensure connected
+                if (!(window.readerRTC && window.readerRTC.isConnected && window.readerRTC.isConnected())) {
+                  try { if (window.readerRTC && window.readerRTC.connect) { await window.readerRTC.connect(); } } catch(_){}
+                }
+                if (window.readerRTC && window.readerRTC.pc_id) {
+                  targetPcId = String(window.readerRTC.pc_id);
+                }
+              }
+            } catch(_) {}
+            this.activePcIdForReading = targetPcId;
+
             // Prefer server-side TTS via /api/tts/read (zero-latency lipsync like LLM path)
             let usedServer = false;
             try {
               const resp = await fetch('/api/tts/read', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ text: textToRead, pc_id: (window.readerRTC && window.readerRTC.pc_id) || undefined })
+                body: JSON.stringify({ text: textToRead, pc_id: this.activePcIdForReading || undefined })
               });
               const data = await resp.json().catch(() => ({}));
               usedServer = !!(data && data.success);
@@ -1181,17 +1203,25 @@ class DocumentWidget {
      * Stop reading utility to match ADA2 API expectations
      */
     stopReading() {
+        // Stop the same session used for reading
+        const pc_id = this.activePcIdForReading || (window.readerRTC && window.readerRTC.pc_id) || (window.avatarVoiceChat && window.avatarVoiceChat.pc_id) || undefined;
+
         // Server interrupt to stop the active TTS/lipsync stream
         try {
-            const pc_id = (window.readerRTC && window.readerRTC.pc_id) || undefined;
             fetch('/api/stop', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ pc_id })
             }).catch(() => {});
         } catch (_) {}
-        // Update local UI only; the client will receive tts_interrupt and halt avatar speech
+
+        // Immediate local stop as a UX safeguard (server will also send tts_interrupt)
+        try { window.__ttsBuf = {}; window.__ttsMeta = {}; } catch (_) {}
+        try { if (window.__TH_AVATAR__ && window.__TH_AVATAR__.stopSpeaking) { window.__TH_AVATAR__.stopSpeaking(); } } catch (_) {}
+
+        // Update UI state
         this.isReading = false;
+        this.activePcIdForReading = null;
         this.updateReadingStatus('Stopped');
         this.updateReadingButtons();
         if (this.currentSection) {

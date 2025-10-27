@@ -5,7 +5,7 @@ from pipecat.frames.frames import (
     TTSTextFrame,
     TTSStartedFrame,
     TTSStoppedFrame,
-    TransportMessageUrgentFrame,
+    OutputTransportMessageFrame,
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
@@ -28,24 +28,23 @@ class SubtitlesAfterTTS(FrameProcessor):
             return
 
         if isinstance(frame, TTSStartedFrame):
-            await self.queue_frame(TransportMessageUrgentFrame({"type": "subtitle_start"}))
+            await self.queue_frame(OutputTransportMessageFrame({"type": "subtitle_start"}))
             await self.push_frame(frame, direction)
             return
 
         if isinstance(frame, TTSTextFrame):
             self._last_text = getattr(frame, "text", "")
             await self.queue_frame(
-                TransportMessageUrgentFrame({"type": "subtitle_delta", "text": self._last_text})
+                OutputTransportMessageFrame({"type": "subtitle_delta", "text": self._last_text})
             )
             await self.push_frame(frame, direction)
             return
 
         if isinstance(frame, TTSStoppedFrame):
             await self.queue_frame(
-                TransportMessageUrgentFrame({"type": "subtitle_end", "text": self._last_text})
+                OutputTransportMessageFrame({"type": "subtitle_end", "text": self._last_text})
             )
             await self.push_frame(frame, direction)
             return
 
         await self.push_frame(frame, direction)
-

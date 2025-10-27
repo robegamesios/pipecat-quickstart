@@ -4,7 +4,7 @@ from pipecat.frames.frames import (
     Frame,
     TranscriptionFrame,
     InterimTranscriptionFrame,
-    TransportMessageUrgentFrame,
+    OutputTransportMessageFrame,
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
@@ -12,7 +12,7 @@ from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 class UserTranscriptLogger(FrameProcessor):
     """Forwards final user transcripts to the browser chat widget.
 
-    Emits a TransportMessageUrgentFrame with type 'user_text' when a
+    Emits an OutputTransportMessageFrame with type 'user_text' when a
     TranscriptionFrame arrives (skips interim frames). Passes all frames
     through unchanged.
     """
@@ -32,13 +32,14 @@ class UserTranscriptLogger(FrameProcessor):
             if text.strip():
                 try:
                     await self.queue_frame(
-                        TransportMessageUrgentFrame({
-                            "type": "user_text",
-                            "text": str(text),
-                        })
+                        OutputTransportMessageFrame(
+                            {
+                                "type": "user_text",
+                                "text": str(text),
+                            }
+                        )
                     )
                 except Exception:
                     pass
 
         await self.push_frame(frame, direction)
-

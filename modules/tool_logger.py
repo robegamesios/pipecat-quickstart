@@ -8,7 +8,7 @@ from pipecat.frames.frames import (
     FunctionCallInProgressFrame,
     FunctionCallResultFrame,
     FunctionCallsStartedFrame,
-    TransportMessageUrgentFrame,
+    OutputTransportMessageFrame,
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
@@ -16,7 +16,7 @@ from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 class ToolUsageLogger(FrameProcessor):
     """Forwards tool usage events to the browser over the data channel.
 
-    Emits TransportMessageUrgentFrame messages with type 'log_tool'. The
+    Emits OutputTransportMessageFrame messages with type 'log_tool'. The
     front-end (injected script) prints them with console.error so they remain
     visible even when non-error logs are suppressed.
     """
@@ -32,14 +32,14 @@ class ToolUsageLogger(FrameProcessor):
             await self.push_frame(frame, direction)
             return
 
-        if isinstance(frame, TransportMessageUrgentFrame):
+        if isinstance(frame, OutputTransportMessageFrame):
             msg = getattr(frame, "message", {}) or {}
             typ = msg.get("type")
             if typ == "subtitle_end":
                 # Spoken turn ends; if no tools were used, mark LLM-only
                 if not self._tool_seen_in_turn:
                     await self.queue_frame(
-                        TransportMessageUrgentFrame(
+                        OutputTransportMessageFrame(
                             {"type": "log_tool", "phase": "llm_only", "name": "llm"}
                         )
                     )
@@ -57,7 +57,7 @@ class ToolUsageLogger(FrameProcessor):
                     "name": getattr(call, "function_name", "unknown"),
                     "args": _safe_trim(getattr(call, "arguments", {})),
                 }
-                await self.queue_frame(TransportMessageUrgentFrame(payload))
+                await self.queue_frame(OutputTransportMessageFrame(payload))
             await self.push_frame(frame, direction)
             return
 
@@ -69,7 +69,7 @@ class ToolUsageLogger(FrameProcessor):
                 "name": frame.function_name,
                 "args": _safe_trim(frame.arguments),
             }
-            await self.queue_frame(TransportMessageUrgentFrame(payload))
+            await self.queue_frame(OutputTransportMessageFrame(payload))
             await self.push_frame(frame, direction)
             return
 
@@ -81,7 +81,7 @@ class ToolUsageLogger(FrameProcessor):
                 "name": frame.function_name,
                 "args": _safe_trim(frame.arguments),
             }
-            await self.queue_frame(TransportMessageUrgentFrame(payload))
+            await self.queue_frame(OutputTransportMessageFrame(payload))
             await self.push_frame(frame, direction)
             return
 

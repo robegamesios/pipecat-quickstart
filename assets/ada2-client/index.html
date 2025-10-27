@@ -109,6 +109,7 @@
         this.localStream = null;
         this.isConnected = false;
         this.isSpeaking = false;
+        this._audioSpeakingStartedAt = 0; // wall-clock when remote audio energy starts
         this.isMicMuted = false;
         this.toolActive = false;
         this.connectedLabel = '✅ Connected to Voice Chat';
@@ -452,9 +453,16 @@
               break;
             case 'tts_interrupt':
               this._bumpActivity();
-              if (!this.toolActive && !this.isSpeaking) {
-                this.updateStatus('👤 User...');
-              }
+              // Stop any current client-side audio and clear pending sentence buffers
+              try { this.isSpeaking = false; this.avatar?.stopSpeaking(); } catch(_) {}
+              try { window.__ttsBuf = {}; window.__ttsMeta = {}; } catch(_) {}
+              // Only change status if not actively reading in the document widget
+              try {
+                const reading = !!(window.documentWidget && window.documentWidget.isReading);
+                if (!reading && !this.toolActive) {
+                  this.updateStatus('👤 User...');
+                }
+              } catch(_) {}
               break;
             case 'log_tool': {
               const phase = (msg.phase || '');
@@ -472,6 +480,13 @@
             case 'tts_sentence_start': {
               this._bumpActivity();
               const id = msg.id; window.__ttsBuf[id] = []; window.__ttsMeta[id] = { text: msg.text||'', sample_rate: msg.sample_rate||24000 };
+              // Kick off visible speaking immediately to avoid perceived delay
+              try {
+                if (!this.isSpeaking && this.avatar && this.avatar.startSpeaking) {
+                  this.isSpeaking = true;
+                  this.avatar.startSpeaking();
+                }
+              } catch (e) {}
               break;
             }
             case 'tts_sentence_chunk': {
@@ -492,7 +507,8 @@
                 const totalMs = Math.max(200, Math.round((totalBytes/2)/sr*1000));
                 const n = Math.max(1, words.length); const base = Math.floor(totalMs / n); const wtimes=[]; const wdurations=[]; let acc=0;
                 for (let i=0;i<n;i++){ const dur = (i===n-1) ? (totalMs-acc) : base; wtimes.push(acc); wdurations.push(Math.max(70, dur)); acc += dur; }
-                try { if (head.setMixerGain) head.setMixerGain(0, null); } catch(e) {}
+                // Ensure avatar speech channel is audible when client plays audio
+                try { if (head.setMixerGain) head.setMixerGain(0.8, null); } catch(e) {}
                 try { head.speakAudio({ audio: bufs, words, wtimes, wdurations }, { lipsyncLang: 'en' }); } catch(e) { console.warn('speakAudio error', e); }
               })();
               break;
